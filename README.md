@@ -1,25 +1,18 @@
-# pybind11-cuda
+# polycheck
 
-Compiles out of the box with cmake 
+A short and sweet library to check whether a point is contained within an arbitrary polygon.  Created as an excuse to work with GPU/CUDA 
+code, and because Shapely is too slow...
 
-Numpy integration 
-
-C++ Templating for composable kernels with generic data types 
-
-Originally based on https://github.com/torstem/demo-cuda-pybind11
-
-# Prerequisites
+## Prerequisites
 
 Cuda installed in /usr/local/cuda 
-
 Python 3.6 or greater 
-
 Cmake 3.6 or greater 
 
-# To build 
+## To build 
 
 ```source install.bash``` 
 
 Test it with 
-```python3 test_mul.py``` 
+```python3 test_poly.py``` 
  
