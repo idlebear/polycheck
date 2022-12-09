@@ -13,31 +13,31 @@ import matplotlib.pyplot as plt
 # @param: point: the point to check
 # @return: +ve if point is left of ep1,ep2, 0 if on the line, -ve otherwise
 #
-def side( ep1, ep2, point ):
-    diff = ep2 - ep1 
-    return (diff[:,0]) * (point[1] - ep1[:,1]) - (point[0] - ep1[:,0]) * (diff[:,1])
+def side(ep1, ep2, point):
+    diff = ep2 - ep1
+    return (diff[:, 0]) * (point[1] - ep1[:, 1]) - (point[0] - ep1[:, 0]) * (diff[:, 1])
 
 
-# contains( poly, point ): check if a point can be found within a polygon.  Based on an 
-# implementation found at: 
+# contains( poly, point ): check if a point can be found within a polygon.  Based on an
+# implementation found at:
 #
 #   https://web.archive.org/web/20130126163405/http://geomalgorithms.com/a03-_inclusion.html
 #
 # @param: poly: an numpy array of polygon points
 # @param: point: the point location to check
 #
-def contains( poly, point ):
+def contains(poly, point):
     wn = 0
 
     poly = np.array(poly)
     point = np.array(point)
-    
+
     # loop through all edges of the polygon
     e1 = poly
-    e2 = np.roll( poly, 1, axis=0 )
-    sides = side( e1, e2, point )
+    e2 = np.roll(poly, 1, axis=0)
+    sides = side(e1, e2, point)
 
-    for ep1, ep2, s in zip( e1, e2, sides ):
+    for ep1, ep2, s in zip(e1, e2, sides):
         if ep1[1] <= point[1]:
             if ep2[1] > point[1]:
                 if s > 0:
@@ -51,45 +51,45 @@ def contains( poly, point ):
 
 
 poly = [
-            [ 5., 5.],
-            [ 5., -5.],
-            [ -5.,-5.],
-            [ -5., 5.]
-        ]
+    [5., 5.],
+    [5., -5.],
+    [-5., -5.],
+    [-5., 5.]
+]
 
-dots = np.linspace( -8, 8, 1000 )
-xs, ys = np.meshgrid( dots, dots, indexing='xy' )
-pts = [ [x,y] for x,y in zip( xs.flatten(), ys.flatten() )]
+dots = np.linspace(-8, 8, 1000)
+xs, ys = np.meshgrid(dots, dots, indexing='xy')
+pts = [[x, y] for x, y in zip(xs.flatten(), ys.flatten())]
 
 t0 = time.time()
 res = []
-sh_poly  = Polygon( poly )
+sh_poly = Polygon(poly)
 for pt in pts:
-    pt = Point( pt )
-    res.append( sh_poly.contains( pt ))
-print( f'Shapely total time: {time.time()-t0}' )
+    pt = Point(pt)
+    res.append(sh_poly.contains(pt))
+print(f'Shapely total time: {time.time()-t0}')
 plt.figure()
-plt.imshow( np.array( res ).reshape( xs.shape ) )
+plt.imshow(np.array(res).reshape(xs.shape))
 plt.title('Shapely')
 
-pc_poly = polycheck.VectorVectorDouble([ polycheck.VectorDouble(v) for v in poly ])
-pc_pts = polycheck.VectorVectorDouble([ polycheck.VectorDouble(p) for p in pts ])
 t0 = time.time()
-res = polycheck.contains( pc_poly, pc_pts )
-print( f'Polycheck total time: {time.time()-t0}' )
+pc_poly = np.array( poly ).astype(np.float64)
+pc_pts = np.array( pts ).astype(np.float64)
+res = np.zeros( [len(pts),1] ).reshape( [-1,1]).astype(np.uint32)
+polycheck.contains(pc_poly, pc_pts, res)
+print(f'Polycheck total time: {time.time()-t0}')
 plt.figure()
-plt.imshow( np.array( res ).reshape( xs.shape ) )
+plt.imshow(np.array(res).reshape(xs.shape))
 plt.title('Polycheck')
 
 t0 = time.time()
 res = []
 for pt in pts:
-    res.append( contains( poly, pt ) )
-print( f'Local check total time: {time.time()-t0}' )
+    res.append(contains(poly, pt))
+print(f'Local check total time: {time.time()-t0}')
 plt.figure()
-plt.imshow( np.array( res ).reshape( xs.shape ) )
+plt.imshow(np.array(res).reshape(xs.shape))
 plt.title('Local check')
 
 
-plt.show( block=True )
-
+plt.show(block=True)

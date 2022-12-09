@@ -40,9 +40,9 @@
 namespace polycheck {
 
 const auto BLOCK_SIZE = 256;
-const auto MAX_BLOCKS = 32;
+const auto MAX_BLOCKS = 64;
 
-std::vector<int> contains( const std::vector<std::vector<double>>& polygon, const std::vector<std::vector<double>>& points );
+void contains( const double *poly_ptr, int num_vertices, const double *points_ptr, int num_points, uint32_t* results_ptr );
 
 }  // polycheck
 

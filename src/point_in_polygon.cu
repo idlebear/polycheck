@@ -35,7 +35,7 @@ namespace polycheck {
     __global__
     void check_points(const double *polygon_data, const size_t num_vertices,
                       const double *points_data, const size_t num_points,
-                      int *result_data) {
+                      uint32_t *result_data) {
 
         auto start_index = blockIdx.x * blockDim.x + threadIdx.x;
         auto stride = blockDim.x * gridDim.x;
@@ -69,56 +69,47 @@ namespace polycheck {
 
     }
 
-    template <class T>
-    void copy_vector_to_device( const std::vector<std::vector<T>> V, void** ptr ) {
-        auto rows = V.size();
-        auto cols = V[0].size();
-
-        CUDA_CALL(cudaMalloc( ptr, rows * cols * sizeof(T)));
-        T* dst = (T*)*ptr;
-        for( int row = 0; row < rows; row++ ) {
-            CUDA_CALL(cudaMemcpy( dst + row * cols, V[row].data(), cols*sizeof(T), cudaMemcpyHostToDevice ));
-        }
-    }
+//    template <class T>
+//    void copy_vector_to_device( const std::vector<std::vector<T>> V, void** ptr ) {
+//        auto rows = V.size();
+//        auto cols = V[0].size();
+//
+//        CUDA_CALL(cudaMalloc( ptr, rows * cols * sizeof(T)));
+//        T* dst = (T*)*ptr;
+//        for( int row = 0; row < rows; row++ ) {
+//            CUDA_CALL(cudaMemcpy( dst + row * cols, V[row].data(), cols*sizeof(T), cudaMemcpyHostToDevice ));
+//        }
+//    }
 
     // contains( poly, point ): check if a point can be found within a polygon.
-    std::vector<int>
-    contains(const std::vector<std::vector<double>> &poly, const std::vector<std::vector<double>> &points) {
-
+    void contains( const double *poly_ptr, int num_vertices, const double *points_ptr, int num_points,
+                   uint32_t* results_ptr ) {
         double *polygon_data;
         double *points_data;
-        int *result_data;
+        uint32_t *result_data;
 
-        auto polygon_size = poly.size() * sizeof(double) * 2;
-        auto points_size = points.size() * sizeof(double) * 2;
-        auto results_size = points.size() * sizeof(int);
+        auto polygon_size = num_vertices * sizeof(double) * 2;
+        auto points_size = num_points * sizeof(double) * 2;
+        auto results_size = num_points * sizeof(uint32_t);
 
-        // allocate device memory for the polygon and the points to test
-        copy_vector_to_device( poly, (void**)&polygon_data );
-        copy_vector_to_device( points, (void**)&points_data);
+        // allocate device memory for the polygon and the points to test, and copy the data over
+        CUDA_CALL(cudaMalloc((void **) &polygon_data, polygon_size));
+        CUDA_CALL(cudaMalloc((void **) &points_data, points_size));
         CUDA_CALL(cudaMalloc((void **) &result_data, results_size));
-        CUDA_CALL(cudaMemset(result_data, 0, results_size));
+        CUDA_CALL(cudaMemcpy(polygon_data, poly_ptr, polygon_size, cudaMemcpyHostToDevice));
+        CUDA_CALL(cudaMemcpy(points_data, points_ptr, points_size, cudaMemcpyHostToDevice));
 
-        printf( "num points: %d\n", points.size() );
         auto block_size = BLOCK_SIZE;
-        auto num_blocks = std::max(MAX_BLOCKS, int((points.size() + block_size - 1) / block_size));
-        check_points<<<num_blocks, block_size>>>(polygon_data, poly.size(), points_data, points.size(), result_data);
-
-        // wait for synchronization/completion
-        CUDA_CALL(cudaDeviceSynchronize());
+        auto num_blocks = std::max(MAX_BLOCKS, int((num_points + block_size - 1) / block_size));
+        check_points<<<num_blocks, block_size>>>(polygon_data, num_vertices, points_data, num_points, result_data);
 
         // copy the results back from the device
-        auto results = std::vector<int>();
-        results.resize( points.size() );
-
-        CUDA_CALL(cudaMemcpy(results.data(), result_data, results_size, cudaMemcpyDeviceToHost));
+        CUDA_CALL(cudaMemcpy(results_ptr, result_data, results_size, cudaMemcpyDeviceToHost));
 
         // free everything up
         CUDA_CALL(cudaFree(polygon_data))
         CUDA_CALL(cudaFree(points_data))
         CUDA_CALL(cudaFree(result_data))
-
-        return results;
     }
 
 }  // polycheck namespace
