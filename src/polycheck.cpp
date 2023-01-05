@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "point_in_polygon.h"
+#include "visibility.h"
 
 namespace py = pybind11;
 
@@ -16,7 +17,7 @@ namespace py = pybind11;
 //
 //   https://stackoverflow.com/questions/54793539/pybind11-modify-numpy-array-from-c
 //
-py::object wrapper(py::array_t<double> poly_array,
+py::object contain_wrapper(py::array_t<double> poly_array,
                    py::array_t<double> points_array,
                    py::array_t<uint32_t> results_array ) {
     // check input dimensions
@@ -46,6 +47,72 @@ py::object wrapper(py::array_t<double> poly_array,
 }
 
 
+py::object visibility_wrapper(py::array_t<double> grid_array,
+                              py::array_t<int> start_array,
+                              py::array_t<double> results_array ) {
+    // check input dimensions
+    if ( grid_array.ndim() != 2 ) {
+        throw std::runtime_error("Input should be 2-D NumPy array");
+    }
+
+    auto height = grid_array.shape()[0];
+    auto width = grid_array.shape()[1];
+    if( start_array.shape()[0] != 1 || start_array.shape()[1] != 2 ) {
+        throw std::runtime_error("Input should cartesian (X,Y) coordinates.");
+    }
+    if( results_array.shape()[0] != height || results_array.shape()[1] != width ) {
+        throw std::runtime_error("Output must be the same size as the input array.");
+    }
+
+    auto grid_array_data = grid_array.request();
+    auto start_array_data = start_array.request();
+    auto results_array_data = results_array.request();
+
+    auto data_ptr = (double *)grid_array_data.ptr;
+    auto start_ptr = (int *)start_array_data.ptr;
+    auto results_ptr = (double *)results_array_data.ptr;
+
+    polycheck::visibility( data_ptr, height, width, results_ptr, start_ptr );
+    return py::cast<py::none>(Py_None);
+}
+
+
+py::object region_visibility_wrapper(py::array_t<double> grid_array,
+                              py::array_t<int> start_array,
+                              py::array_t<int> ends_array,
+                              py::array_t<double> results_array ) {
+    // check input dimensions
+    if ( grid_array.ndim() != 2 ) {
+        throw std::runtime_error("Input should be 2-D NumPy array");
+    }
+
+    auto height = grid_array.shape()[0];
+    auto width = grid_array.shape()[1];
+    if( start_array.shape()[0] != 1 || start_array.shape()[1] != 2 ) {
+        throw std::runtime_error("Input should cartesian (X,Y) coordinates.");
+    }
+    if( results_array.shape()[0] != height || results_array.shape()[1] != width ) {
+        throw std::runtime_error("Output must be the same size as the input array.");
+    }
+
+    auto grid_array_data = grid_array.request();
+    auto start_array_data = start_array.request();
+    auto ends_array_data = ends_array.request();
+    auto results_array_data = results_array.request();
+
+    auto data_ptr = (double *)grid_array_data.ptr;
+    auto start_ptr = (int *)start_array_data.ptr;
+    auto ends_ptr = (int *)ends_array_data.ptr;
+    auto results_ptr = (double *)results_array_data.ptr;
+
+    polycheck::visibility( data_ptr, height, width, results_ptr, start_ptr, ends_ptr, ends_array.shape()[0] );
+    return py::cast<py::none>(Py_None);
+}
+
+
+
 PYBIND11_MODULE(polycheck, m) {
-    m.def("contains", &wrapper, py::arg( "polygon"), py::arg( "points" ), py::arg( "results"));
+    m.def("contains", &contain_wrapper, py::arg( "polygon"), py::arg( "points" ), py::arg( "results"));
+    m.def("visibility", &visibility_wrapper, py::arg( "grid"), py::arg( "start" ), py::arg( "results"));
+    m.def("region_visibility", &region_visibility_wrapper, py::arg( "grid"), py::arg( "start" ),  py::arg( "ends" ), py::arg( "results"));
 }

@@ -57,11 +57,16 @@ poly = [
     [-5., 5.]
 ]
 
-dots = np.linspace(-8, 8, 1000)
+dots = np.linspace(-8, 8, 200)
 xs, ys = np.meshgrid(dots, dots, indexing='xy')
 pts = [[x, y] for x, y in zip(xs.flatten(), ys.flatten())]
 
 t0 = time.time()
+res = []
+sh_poly = Polygon(poly)
+for pt in pts:
+    pt = Point(pt)
+    res.append(sh_poly.contains(pt))
 res = []
 sh_poly = Polygon(poly)
 for pt in pts:
@@ -73,6 +78,10 @@ plt.imshow(np.array(res).reshape(xs.shape))
 plt.title('Shapely')
 
 t0 = time.time()
+pc_poly = np.array( poly ).astype(np.float64)
+pc_pts = np.array( pts ).astype(np.float64)
+res = np.zeros( [len(pts),1] ).reshape( [-1,1]).astype(np.uint32)
+polycheck.contains(pc_poly, pc_pts, res)
 pc_poly = np.array( poly ).astype(np.float64)
 pc_pts = np.array( pts ).astype(np.float64)
 res = np.zeros( [len(pts),1] ).reshape( [-1,1]).astype(np.uint32)
@@ -91,5 +100,5 @@ plt.figure()
 plt.imshow(np.array(res).reshape(xs.shape))
 plt.title('Local check')
 
-
-plt.show(block=True)
+#
+# plt.show(block=True)

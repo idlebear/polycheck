@@ -66,20 +66,7 @@ namespace polycheck {
             }
             result_data[i] = winding_number != 0 ? 1 : 0;
         }
-
     }
-
-//    template <class T>
-//    void copy_vector_to_device( const std::vector<std::vector<T>> V, void** ptr ) {
-//        auto rows = V.size();
-//        auto cols = V[0].size();
-//
-//        CUDA_CALL(cudaMalloc( ptr, rows * cols * sizeof(T)));
-//        T* dst = (T*)*ptr;
-//        for( int row = 0; row < rows; row++ ) {
-//            CUDA_CALL(cudaMemcpy( dst + row * cols, V[row].data(), cols*sizeof(T), cudaMemcpyHostToDevice ));
-//        }
-//    }
 
     // contains( poly, point ): check if a point can be found within a polygon.
     void contains( const double *poly_ptr, int num_vertices, const double *points_ptr, int num_points,

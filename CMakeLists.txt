@@ -10,7 +10,8 @@ find_package(PythonLibs 3.6 REQUIRED)
 
 include_directories(
     ${PYTHON_INCLUDE_DIRS}
-    ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+        ${EIGEN3_INCLUDE_DIRS}
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
     ./pybind11/include
     ./include
     )
@@ -24,7 +25,10 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
 add_library(${PROJECT_NAME} SHARED
         src/point_in_polygon.cu
         include/point_in_polygon.h
-        src/polycheck.cpp)
+        src/polycheck.cpp
+        src/visibility.cu
+        include/visibility.h
+        include/common.h)
 
 target_link_libraries(${PROJECT_NAME}
         ${PYTHON_LIBRARIES}
