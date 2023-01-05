@@ -46,7 +46,6 @@ if __name__ == "__main__":
     plt.imshow(result)
     plt.title(f'big ({grid_size})')
 
-    grid_size = (300,300)
     t0 = time.time()
     result = np.zeros_like(grid)
     xx, yy = np.meshgrid( np.arange( 200, 300, 1 ), np.arange( 150,250,1))
@@ -58,6 +57,20 @@ if __name__ == "__main__":
     plt.figure()
     plt.imshow(result)
     plt.title(f'big ({grid_size})')
+
+    fig, ax = plt.subplots( 2, 5, figsize=(15,8) )
+
+    for i in range(10):
+        t0 = time.time()
+        result = np.zeros_like(grid)
+        xx, yy = np.meshgrid( np.arange( 200, 300, 1 ), np.arange( 150,250,1))
+        start = np.array( ( np.random.random((1,2))*grid_size[0]).astype(int)).reshape(1,2)
+        polycheck.visibility( grid, start, result)
+        print(f'region visibility total time: {time.time()-t0}')
+
+        result[start[0,1], start[0,0]] = 5
+
+        ax[int(i/5), int(i%5)].imshow(result)
 
 
 
