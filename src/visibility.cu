@@ -4,6 +4,7 @@
 
 #include "visibility.h"
 #include <float.h>
+#include <iostream>
 
 namespace polycheck {
 
@@ -44,22 +45,43 @@ namespace polycheck {
     }
 
     __global__ void
-    check_visibility(const double *data, const size_t height, const size_t width, const int *start,
+    check_visibility(const double *data, const int height, const int width, const int *start,
                           const int *ends, int num_ends, double *results ) {
 
         auto start_index = blockIdx.x * blockDim.x + threadIdx.x;
         auto stride = blockDim.x * gridDim.x;
 
-        for (int i = start_index; i < num_ends; i += stride) {
+        for (auto i = start_index; i < num_ends; i += stride) {
             int ex, ey;
             if( ends == nullptr ) {
-                ex = i % width;
-                ey = i / width;
+                ex = int(i % width);
+                ey = int(i / width);
             } else {
                 ex = ends[i*2];
                 ey = ends[i*2+1];
             }
             results[ey*width + ex] = line_observation( data, height, width, start[0], start[1], ex, ey );
+        }
+    }
+
+    __global__ void
+    check_region_visibility(const double *data, const int height, const int width, const int *starts, int num_starts,
+                          const int *ends, int num_ends, double *results ) {
+
+        auto ends_index = blockIdx.x * blockDim.x + threadIdx.x;
+        auto ends_stride = blockDim.x * gridDim.x;
+        auto starts_index = blockIdx.y * blockDim.y + threadIdx.y;
+        auto starts_stride = blockDim.y * gridDim.y;
+
+        for (auto si = starts_index; si < num_starts; si += starts_stride) {
+            auto sx = starts[si*2];
+            auto sy = starts[si*2+1];
+
+            for (auto ei = ends_index; ei < num_ends; ei += ends_stride) {
+                auto ex = ends[ei*2];
+                auto ey = ends[ei*2+1];
+                results[si * num_ends + ei] = line_observation(data, height, width, sx, sy, ex, ey);
+            }
         }
     }
 
@@ -97,8 +119,66 @@ namespace polycheck {
         // copy the results back from the device
         CUDA_CALL(cudaMemcpy(results, cuda_result, height * width * sizeof(double), cudaMemcpyDeviceToHost));
 
-        return;
+        // release the memory
+        CUDA_CALL(cudaFree(cuda_data));
+        CUDA_CALL(cudaFree(cuda_start));
+        CUDA_CALL(cudaFree(cuda_result));
+        if( cuda_ends != nullptr){
+            CUDA_CALL(cudaFree(cuda_ends));
+        }
     }
+
+
+    void
+    visibility_from_region( const double* data, int height, int width, double* results, const int* starts,
+                            int num_starts, const int* ends, int num_ends ) {
+
+        double *cuda_data;
+        double *cuda_result;
+        int *cuda_ends;
+        int *cuda_start;
+
+        auto data_size = height * width * sizeof(double);
+        auto start_size = num_starts * 2 * sizeof(int);
+        auto ends_size = num_ends * 2 * sizeof(int);
+
+        CUDA_CALL(cudaMalloc( &cuda_data, data_size));
+        CUDA_CALL(cudaMemcpy( cuda_data, data, data_size, cudaMemcpyHostToDevice));
+        CUDA_CALL(cudaMalloc( &cuda_start, start_size));
+        CUDA_CALL(cudaMemcpy( cuda_start, starts, start_size, cudaMemcpyHostToDevice));
+        CUDA_CALL(cudaMalloc( &cuda_ends, ends_size));
+        CUDA_CALL(cudaMemcpy( cuda_ends, ends, ends_size, cudaMemcpyHostToDevice));
+
+        // The space required for results is now a value for each desired end-point, arranged in rows for each
+        // desired starting point. NOTE: this can be very large...
+        auto results_size = num_starts * num_ends * sizeof(double);
+        CUDA_CALL(cudaMalloc( &cuda_result, results_size));
+        CUDA_CALL(cudaMemset(cuda_result, 0, results_size));
+
+        std::cout << "Calling region visibility check with " << num_starts << " starts and " << num_ends << " ends." << std::endl;
+
+        dim3 block( 32, 32);
+        dim3 grid( std::max(MAX_BLOCKS, int((num_ends + 32 - 1) / 32)),
+                        std::max(MAX_BLOCKS, int((num_starts + 32 - 1) / 32)));
+
+        std::cout << "Using a grid of size " << grid.x << "," << grid.y << " and blocks of " << block.x  << "," << block.y << std::endl;
+
+        check_region_visibility<<<grid, block>>>(cuda_data, height, width,
+                                                 cuda_start, num_starts,
+                                                 cuda_ends, num_ends, cuda_result);
+
+        // copy the results back from the device
+        CUDA_CALL(cudaMemcpy(results, cuda_result, results_size, cudaMemcpyDeviceToHost));
+
+        // release the memory
+        CUDA_CALL(cudaFree(cuda_data));
+        CUDA_CALL(cudaFree(cuda_start));
+        CUDA_CALL(cudaFree(cuda_result));
+        if( cuda_ends != nullptr){
+            CUDA_CALL(cudaFree(cuda_ends));
+        }
+   }
+
 
 
 }
