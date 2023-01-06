@@ -73,8 +73,8 @@ if __name__ == "__main__":
         ax[int(i/5), int(i%5)].imshow(result)
 
     t0 = time.time()
-    sxs, sys = 100, 100
-    sxe, sye = 110, 102
+    sxs, sys = 40, 100
+    sxe, sye = 50, 101
     xx, yy = np.meshgrid( np.arange( sxs, sxe, 1 ), np.arange( sys, sye, 1))
     starts = np.array([[x,y] for x,y in zip( xx.flatten(), yy.flatten() )])
 
@@ -86,7 +86,7 @@ if __name__ == "__main__":
     # ])
     exs, eys = 5, 10
     exe, eye = 35, 100
-    grid[ eys:eye, exs:exe ] = np.random.random( (eye-eys, exe-exs) ) * 0.5  # add some uncertainty
+    grid[ eys:eye, exs:exe ] = np.random.random( (eye-eys, exe-exs) ) * 0.1  # add some uncertainty
     xx, yy = np.meshgrid( np.arange( exs, exe, 1 ), np.arange( eys, eye, 1))
     ends = np.array([[x,y] for x,y in zip( xx.flatten(), yy.flatten() )])
     result = np.zeros( (starts.shape[0], ends.shape[0]))
@@ -101,7 +101,10 @@ if __name__ == "__main__":
 
     for r in range( rows ):
         for c in range( cols ):
-            ax[ r, c ].imshow( result[r*cols +c].reshape( eye-eys, exe-exs ) )
+            if rows == 1:
+                ax[ c ].imshow( result[r*cols +c].reshape( eye-eys, exe-exs ) )
+            else:
+                ax[ r, c ].imshow( result[r*cols +c].reshape( eye-eys, exe-exs ) )
 
 
     log_result = np.log(result+0.00000001) * result

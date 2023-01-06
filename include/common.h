@@ -33,8 +33,8 @@ namespace polycheck {
 #endif
 
     // Thread allocation sizes
-    const auto BLOCK_SIZE = 256;
-    const auto MAX_BLOCKS = 64;
+    const auto BLOCK_SIZE = 512;
+    const auto MAX_BLOCKS = 128;
 
 }
 
