@@ -37,6 +37,7 @@ if __name__ == "__main__":
     grid[ 20:70, 40:90] = 1
     grid[ 180:200, 250:275] = np.random.random( [20,25])  / 10.0
     grid[ 160:260, 25:30] = np.random.random( [100,5])
+    grid[ 175:220, 90:155] = 0.25
     result = np.zeros_like(grid)
     start = np.array( [150,150]).reshape(1,2)
     polycheck.visibility( grid, start, result)
@@ -73,8 +74,8 @@ if __name__ == "__main__":
         ax[int(i/5), int(i%5)].imshow(result)
 
     t0 = time.time()
-    sxs, sys = 40, 100
-    sxe, sye = 50, 101
+    sxs, sys = 5, 5
+    sxe, sye = 295, 295
     xx, yy = np.meshgrid( np.arange( sxs, sxe, 1 ), np.arange( sys, sye, 1))
     starts = np.array([[x,y] for x,y in zip( xx.flatten(), yy.flatten() )])
 
@@ -86,42 +87,62 @@ if __name__ == "__main__":
     # ])
     exs, eys = 5, 10
     exe, eye = 35, 100
-    grid[ eys:eye, exs:exe ] = np.random.random( (eye-eys, exe-exs) ) * 0.1  # add some uncertainty
+    grid[ eys:eye, exs:exe ] = 0.1  # add some uncertainty
     xx, yy = np.meshgrid( np.arange( exs, exe, 1 ), np.arange( eys, eye, 1))
     ends = np.array([[x,y] for x,y in zip( xx.flatten(), yy.flatten() )])
     result = np.zeros( (starts.shape[0], ends.shape[0]))
 
     polycheck.visibility_from_region( grid, starts, ends, result)
 
+    print(f'region visibility total time: {time.time()-t0}')
+
     # rows = 2 
     # cols = 2 
     rows = sye - sys
     cols = sxe - sxs
-    figure, ax = plt.subplots( rows, cols )
 
+    observe_dx = exe - exs
+    observe_dy = eye - eys
+
+    composite_image = np.zeros((rows*observe_dy,cols*observe_dx))
     for r in range( rows ):
         for c in range( cols ):
-            if rows == 1:
-                ax[ c ].imshow( result[r*cols +c].reshape( eye-eys, exe-exs ) )
-            else:
-                ax[ r, c ].imshow( result[r*cols +c].reshape( eye-eys, exe-exs ) )
+            oy = r * observe_dy
+            ox = c * observe_dx
+            composite_image[ oy:oy+observe_dy, ox:ox+observe_dx] = result[r*cols +c].reshape( observe_dy, observe_dx )
 
+    plt.figure()
+    plt.imshow( composite_image )
 
-    log_result = np.log(result+0.00000001) * result
+    log_result = -np.log(result+0.00000001) * result
     ig = np.sum( log_result, axis=1 ).reshape( int(sye-sys), int(sxe-sxs) )
+    normalized_ig = ig - np.min(ig)
+    normalized_ig = normalized_ig / np.max(normalized_ig)
 
-    print(f'region visibility total time: {time.time()-t0}')
+    print( f"max ig: {np.max(ig)}, min ig: {np.min(ig)}")
+    print( f"max normalized ig: {np.max(normalized_ig)}, min norm ig: {np.min(normalized_ig)}")
+
+    composite_image = np.zeros((rows*observe_dy,cols*observe_dx))
+    for r in range( rows ):
+        for c in range( cols ):
+            oy = r * observe_dy
+            ox = c * observe_dx
+            composite_image[ oy:oy+observe_dy, ox:ox+observe_dx] = log_result[r*cols +c].reshape( observe_dy, observe_dx )
+
+    plt.figure()
+    plt.imshow( composite_image )
+
+    plt.figure()
+    plt.imshow( normalized_ig  )
 
     plt.figure()
 
     image = np.zeros( (*grid_size, 3) )
     image[:,:,0] = grid
-    image[ sys:sye, sxs:sxe, :] += 0.25
-    image[ sys:sye, sxs:sxe, 2] += 0.25
-    image[ sys:sye, sxs:sxe, 2] += ig / np.max(ig) * 0.5
+    image[ sys:sye, sxs:sxe, 2] = normalized_ig
 
-    image[ eys:eye, exs:exe, :] += 0.5
-    image[ eys:eye, exs:exe, 1] += 0.25
+    # image[ eys:eye, exs:exe, :] += 0.5
+    image[ eys:eye, exs:exe, 1] += 0.5
 
     image = Image.fromarray((image * 255.0).astype(np.uint8))
     plt.imshow(image)
