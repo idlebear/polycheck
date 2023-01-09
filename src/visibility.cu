@@ -157,11 +157,10 @@ namespace polycheck {
 
         std::cout << "Calling region visibility check with " << num_starts << " starts and " << num_ends << " ends." << std::endl;
 
-        auto x_block_size = BLOCK_SIZE / 16;
-        auto y_block_size = BLOCK_SIZE / x_block_size;
-        dim3 block( x_block_size, y_block_size);
+        auto x_block_size = BLOCK_SIZE / Y_BLOCK_SIZE;
+        dim3 block( x_block_size, Y_BLOCK_SIZE);
         dim3 grid( std::max( 1, std::min(MAX_BLOCKS, int((num_ends + x_block_size - 1) / x_block_size))),
-                   std::max( 1, std::min(MAX_BLOCKS, int((num_starts + y_block_size - 1) / y_block_size))));
+                   std::max( 1, std::min(MAX_BLOCKS, int((num_starts + Y_BLOCK_SIZE - 1) / Y_BLOCK_SIZE))));
 
         std::cout << "Using a grid of size " << grid.x << "," << grid.y << " and blocks of " << block.x  << "," << block.y << std::endl;
 
