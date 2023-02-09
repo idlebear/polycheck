@@ -10,7 +10,7 @@ namespace polycheck {
 
     __device__ double
     line_observation( const double* data, int height, int width, int sx, int sy, int ex, int ey ) {
-        // Using Bresenham implementation found at:
+        // Using Bresenham implementation based on description found at:
         //   http://members.chello.at/~easyfilter/Bresenham.pdf
         auto dx = abs(sx-ex);
         auto step_x = sx < ex ? 1 : -1;
@@ -20,10 +20,7 @@ namespace polycheck {
 
         auto observation = 1.0;    // assume the point is initially viewable
         for( ;; ) {
-            observation *= (1.0 - data[ sy * width + sx]);
-            if( observation < FLT_EPSILON*2 ) {
-                break;
-            }
+            auto view_prob = (1.0 - data[ sy * width + sx]);
             auto e2 = 2 * error;
             if( e2 >= dy ) {
                 if( sx == ex ) {
@@ -38,6 +35,13 @@ namespace polycheck {
                 }
                 error += dx;
                 sy += step_y;
+            }
+
+            // If we haven't reached the end of the line, apply the view probability to the current observation
+            observation *= view_prob;
+            if( observation < FLT_EPSILON*2 ) {          // early stopping condition
+                observation = 0;
+                break;
             }
         }
 
