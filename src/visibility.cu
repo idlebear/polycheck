@@ -155,11 +155,10 @@ namespace polycheck {
         CUDA_CALL(cudaMalloc( &cuda_result, results_size));
         CUDA_CALL(cudaMemset(cuda_result, 0, results_size));
 
-        auto x_block_size = BLOCK_SIZE / 16;
-        auto y_block_size = BLOCK_SIZE / x_block_size;
-        dim3 block( x_block_size, y_block_size);
+        auto x_block_size = BLOCK_SIZE / Y_BLOCK_SIZE;
+        dim3 block( x_block_size, Y_BLOCK_SIZE);
         dim3 grid( std::max( 1, std::min(MAX_BLOCKS, int((num_ends + x_block_size - 1) / x_block_size))),
-                   std::max( 1, std::min(MAX_BLOCKS, int((num_starts + y_block_size - 1) / y_block_size))));
+                   std::max( 1, std::min(MAX_BLOCKS, int((num_starts + Y_BLOCK_SIZE - 1) / Y_BLOCK_SIZE))));
 
         check_region_visibility<<<grid, block>>>(cuda_data, height, width,
                                                  cuda_start, num_starts,
