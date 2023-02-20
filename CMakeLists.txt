@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.6)
+set( CMAKE_C_COMPILER "nvcc" )
 project(polycheck LANGUAGES CXX CUDA)
 
 set(CMAKE_CUDA_STANDARD 14)
@@ -23,8 +24,6 @@ link_directories(
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
 
 add_library(${PROJECT_NAME} SHARED
-        src/point_in_polygon.cu
-        include/point_in_polygon.h
         src/polycheck.cpp
         src/visibility.cu
         include/visibility.h
