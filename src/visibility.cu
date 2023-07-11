@@ -21,8 +21,6 @@
 #include <vector>
 #include <stdexcept>
 
-#include "point_in_polygon.h"
-
 #include "visibility.h"
 
 
