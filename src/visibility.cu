@@ -21,8 +21,6 @@
 #include <vector>
 #include <stdexcept>
 
-#include "point_in_polygon.h"
-
 #include "visibility.h"
 
 
@@ -95,7 +93,6 @@ namespace polycheck {
 
         auto observation = 1.0;    // assume the point is initially viewable
         for( ;; ) {
-            auto view_prob = (1.0 - data[ sy * width + sx]);
             auto e2 = 2 * error;
             if( e2 >= dy ) {
                 if( sx == ex ) {
@@ -113,7 +110,7 @@ namespace polycheck {
             }
 
             // If we haven't reached the end of the line, apply the view probability to the current observation
-            observation *= view_prob;
+            observation *= (1.0 - data[ sy * width + sx]);
             if( observation < FLT_EPSILON*2 ) {          // early stopping condition
                 observation = 0;
                 break;
