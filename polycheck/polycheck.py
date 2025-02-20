@@ -1,4 +1,22 @@
-# PyCUDA Example!
+"""
+This module provides functions for performing various geometric and visibility checks using CUDA for parallel computation.
+
+Functions:
+    contains(poly, points):
+        Checks if a set of points are inside a given polygon using the winding number algorithm.
+
+    visibility(data, start, ends):
+        Computes visibility from a start point to multiple end points on a grid using Bresenham's line algorithm.
+
+    visibility_from_region(data, starts, ends):
+        Computes visibility from multiple start points to multiple end points on a grid using Bresenham's line algorithm.
+
+    visibility_from_real_region(data, origin, resolution, starts, ends):
+        Computes visibility from multiple start points to multiple end points on a grid with real-world coordinates using a floating-point grid traversal algorithm.
+
+    faux_scan(polygons, origin, angle_start, angle_inc, num_rays, max_range, resolution):
+        Performs a faux laser scan from an origin point, simulating rays at specified angles and increments, and checking for intersections with polygons.
+"""
 
 import pycuda.gpuarray as gpuarray
 import pycuda.driver as cuda
