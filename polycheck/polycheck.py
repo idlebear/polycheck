@@ -221,6 +221,10 @@ mod = SourceModule(
         auto step_y = sy < ey ? 1 : -1;
         auto error = dx + dy;
 
+        if( sx == ex && sy == ey ) {
+            return 1.0;
+        }
+
         auto observation = 1.0;    // assume the point is initially viewable
         for( ;; ) {
             auto e2 = 2 * error;
@@ -228,7 +232,7 @@ mod = SourceModule(
                 if( sx == ex ) {
                     break;
                 }
-                error = error + dy;
+                error += dy;
                 sx += step_x;
             }
             if( e2 <= dx ) {
@@ -237,6 +241,10 @@ mod = SourceModule(
                 }
                 error += dx;
                 sy += step_y;
+            }
+
+            if( sx == ex && sy == ey ) {
+                break;
             }
 
             // If we haven't reached the end of the line, apply the view probability to the current observation
@@ -556,7 +564,9 @@ def visibility_from_real_region(data, origin, resolution, starts, ends):
     return results
 
 
-def faux_scan(polygons, origin, angle_start, angle_inc, num_rays, max_range, resolution):
+def faux_scan(
+    polygons, origin, angle_start, angle_inc, num_rays, max_range, resolution
+):
     polygons = polygons.astype(np.float32)
     poly_data_size = polygons.nbytes
 
