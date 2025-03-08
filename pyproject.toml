@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "polycheck"
+version = "0.1.0"
+description = "A Python project for various ray-based visibility algorithms."
+readme = "README.md"
+dependencies = [
+  "numpy",
+  "pycuda",
+]
+requires-python = ">=3.8"
+authors = [
+  {name = "Barry Gilhuly", email = "barry.gilhuly@uwaterloo.ca"},
+]
+maintainers = [
+  {name = "Barry Gilhuly", email = "barry.gilhuly@uwaterloo.ca"},
+]
+license = "MIT"  # or license = {file = "LICENSE.txt"} for legacy declaration
+license-files = ["LICEN[CS]E.*"]
+keywords = ["polycheck", "visibility", "raycasting"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python"
+]
+
+[project.urls]
+Repository = "https://github.com/idlebear/polycheck.git"
