@@ -1,4 +1,4 @@
-import polygpu
+import polycheck as poly
 from shapely.geometry import Polygon, Point
 
 import numpy as np
@@ -79,7 +79,7 @@ plt.title("Shapely")
 t0 = time.time()
 pc_poly = np.array(poly).astype(np.float64)
 pc_pts = np.array(pts).astype(np.float64)
-res = polygpu.contains(pc_poly, pc_pts)
+res = poly.contains(pc_poly, pc_pts)
 print(f"Polycheck total time: {time.time()-t0}")
 plt.figure()
 plt.imshow(np.array(res).reshape(xs.shape))
