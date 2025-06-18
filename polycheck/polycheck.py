@@ -20,15 +20,90 @@ Functions:
 
 import pycuda.gpuarray as gpuarray
 import pycuda.driver as cuda
-import pycuda.autoprimaryctx  # import pycuda.autoinit
+
+# import pycuda.autoprimaryctx
+# import pycuda.autoinit # Removed to allow flexible context management
 from pycuda.compiler import SourceModule
 
 import numpy as np
+import atexit  # For ensuring context cleanup on exit
+
+# --- CUDA Context Management ---
+_polycheck_module_context = (
+    None  # Stores the context active during SourceModule compilation
+)
+_polycheck_created_this_context = (
+    False  # True if polycheck created _polycheck_module_context
+)
+
+
+def _establish_module_context():
+    """
+    Ensures a CUDA context is available for SourceModule compilation and sets
+    _polycheck_module_context. Called once when the module is loaded.
+    Prefers an existing current context. If none, creates one on device 0.
+    """
+    global _polycheck_module_context, _polycheck_created_this_context
+    # This function should only effectively run once at module import.
+    if _polycheck_module_context is not None:
+        return
+
+    # Try to get an already current context
+    try:
+        _polycheck_module_context = cuda.Context.get_current()
+        # If successful, _polycheck_created_this_context remains False,
+        # as this module did not create this context.
+    except cuda.LogicError:  # No current context
+        cuda.init()  # Ensure CUDA driver is initialized
+        device = cuda.Device(0)  # Default to device 0
+        _polycheck_module_context = device.make_context()  # Creates and makes current
+        _polycheck_created_this_context = (
+            True  # Mark that polycheck created this context
+        )
+
+
+_establish_module_context()  # Ensure context is ready for SourceModule compilation
+
+
+def _cleanup_polycheck_context_atexit():
+    """
+    Registered with atexit. Cleans up the CUDA context created by polycheck
+    at module load time, if one was indeed created by this module because
+    no other context was active at that time.
+    """
+    global _polycheck_module_context, _polycheck_created_this_context
+    if _polycheck_created_this_context and _polycheck_module_context:
+        try:
+            # A CUDA context must be popped from the current thread's context stack
+            # before it can be detached.
+            is_current_on_this_thread = False
+            try:
+                if cuda.Context.get_current() == _polycheck_module_context:
+                    is_current_on_this_thread = True
+            except cuda.LogicError:  # No context is current on this thread.
+                pass
+
+            if is_current_on_this_thread:
+                _polycheck_module_context.pop()
+
+            _polycheck_module_context.detach()  # Destroy the context
+
+            _polycheck_module_context = None
+            _polycheck_created_this_context = False
+        except cuda.Error:
+            # Suppress errors during atexit cleanup (e.g., if context was already destroyed)
+            pass
+        except Exception:
+            # Suppress any other unexpected errors during atexit cleanup
+            pass
+
+
+atexit.register(_cleanup_polycheck_context_atexit)
+# --- End CUDA Context Management ---
 
 BLOCK_SIZE = 32
 Y_BLOCK_SIZE = 32
 MAX_BLOCKS = 32
-
 mod = SourceModule(
     """
 
@@ -422,6 +497,41 @@ def contains(poly, points):
     cuda.memcpy_dtoh(results, results_gpu)
 
     return results
+
+
+def initialize_cuda_context(device_id=0):
+    """
+    Creates and activates a new CUDA context on the specified device.
+
+    This function provides a way for users to explicitly create a new,
+    regular (non-primary) CUDA context. The newly created context will
+    become the current context on this thread. This is useful if the user
+    wants to manage contexts explicitly or ensure operations run on a
+    specific device within a fresh context.
+
+    This method avoids the issues associated with `pycuda.autoinit`'s
+    management of primary contexts, thus being less "disturbing" to
+    an environment where contexts might already be managed.
+
+    Args:
+        device_id (int): The ID of the CUDA device on which to create the context.
+
+    Returns:
+        pycuda.driver.Context: The newly created and activated CUDA context.
+
+    Note:
+        The polycheck module's internal CUDA kernels (compiled into `mod`)
+        are associated with the CUDA context that was active when the
+        `polycheck.polycheck` module was first imported. If this function
+        is called *after* the module has been loaded and it establishes a
+        *different* context, ensure that subsequent calls to polycheck
+        functions are compatible with this context change. PyCUDA operations
+        (memory allocation, kernel launches) occur in the currently active context.
+    """
+    cuda.init()  # Ensure CUDA driver is initialized
+    device = cuda.Device(device_id)
+    context = device.make_context()  # Creates and makes the context current
+    return context
 
 
 def visibility(data, start, ends):
