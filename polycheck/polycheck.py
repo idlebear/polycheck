@@ -202,58 +202,71 @@ mod = SourceModule(
         float dx = end_x - src_x;
         float dy = end_y - src_y;
         float magnitude = sqrt(dx*dx + dy*dy);
+        // Handle zero magnitude case (src == end or very close)
+        if (is_zero(magnitude)) {
+            auto s_check_x = static_cast<int>(floorf((src_x - origin_x) / resolution));
+            auto s_check_y = static_cast<int>(floorf((src_y - origin_y) / resolution));
+            if (s_check_x < 0 || s_check_x >= width || s_check_y < 0 || s_check_y >= height) return 0.0f;
+            return 1.0f; // Start and end are same, and inside grid: visible by default
+        }
         dx /= (magnitude);
         dy /= (magnitude);
 
         auto rx = ( src_x - origin_x ) / resolution;
-        auto sx = epsilon_round(rx);
+        auto sx = static_cast<int>(floorf(rx));
         auto ry = ( src_y - origin_y ) / resolution;
-        auto sy = epsilon_round(ry);
+        auto sy = static_cast<int>(floorf(ry));
 
-        // BUGBUG -- for now, just return 0 if the point is outside the grid.
+        // return 0 if the point is outside the grid.
         if( sx < 0 || sx >= width || sy < 0 || sy >= height ) {
-            return 0;
+            return 0.0f;
         }
 
-        auto ex = epsilon_round(( end_x - origin_x ) / resolution);
-        auto ey = epsilon_round(( end_y - origin_y ) / resolution);
+        auto ex = static_cast<int>(floorf(( end_x - origin_x ) / resolution));
+        auto ey = static_cast<int>(floorf(( end_y - origin_y ) / resolution));
 
         if( sx == ex && sy == ey ) {
-            return 1.0;
+            return 1.0f;
         }
 
-        int step_x = 0;
-        float t_max_x = FLT_MAX;
-        if( dx > 0 ) {
+        int step_x;
+        float t_max_x;
+        float t_delta_x;
+
+        if (is_zero(dx)) {
+            step_x = 0;
+            t_max_x = FLT_MAX;
+            t_delta_x = FLT_MAX;
+        } else if( dx > 0.0f ) {
             step_x = 1;
-            t_max_x = (sx + 1.0 - rx) / dx;
-        } else if( dx < 0 ) {
+            t_max_x = (floorf(rx) + 1.0f - rx) / dx;
+            t_delta_x = 1.0f / dx;
+        } else { // dx < 0.0f
             step_x = -1;
-            t_max_x = (rx - sx) / -dx;
-            if( t_max_x == 0 ) {
-                t_max_x = 1.0/ -dx;
-                sx += step_x;
-            }
+            t_max_x = (rx - floorf(rx)) / (-dx);
+            t_delta_x = 1.0f / (-dx);
         }
 
-        int step_y = 0;
-        float t_max_y = FLT_MAX;
-        if( dy > 0 ) {
+        int step_y;
+        float t_max_y;
+        float t_delta_y;
+
+        if (is_zero(dy)) {
+            step_y = 0;
+            t_max_y = FLT_MAX;
+            t_delta_y = FLT_MAX;
+        } else if( dy > 0.0f ) {
             step_y = 1;
-            t_max_y = (sy + 1.0 - ry) / dy;
-        } else if( dy < 0 ) {
+            t_max_y = (floorf(ry) + 1.0f - ry) / dy;
+            t_delta_y = 1.0f / dy;
+        } else { // dy < 0.0f
             step_y = -1;
-            t_max_y = (ry - sy) / -dy;
-            if( t_max_y == 0 ) {
-                t_max_y = 1.0/ -dy;
-                sy += step_y;
-            }
+            t_max_y = (ry - floorf(ry)) / (-dy);
+            t_delta_y = 1.0f / (-dy);
         }
 
-        float t_delta_x = 1.0 / abs(dx);
-        float t_delta_y = 1.0 / abs(dy);
 
-        auto observation = 1.0;    // assume the point is initially viewable
+        auto observation = 1.0f;    // assume the point is initially viewable
         while( true ) {
             if( t_max_x < t_max_y ) {
                 sx += step_x;
@@ -270,14 +283,14 @@ mod = SourceModule(
 
             // check for grid boundaries
             if( sx < 0 || sx >= width || sy < 0 || sy >= height ) {
-                observation = 0;
+                observation = 0.0f;
                 break;
             }
 
             // If we haven't reached the end of the line, apply the view probability to the current observation
-            observation *= (1.0 - data[ sy * width + sx]);
+            observation *= (1.0f - data[ sy * width + sx]);
             if( is_zero(observation) ) {          // early stopping condition
-                observation = 0;
+                observation = 0.0f; // Ensure it's exactly zero
                 break;
             }
         }
