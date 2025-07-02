@@ -25,11 +25,15 @@ Local check total time: 13.260296821594238
 * Python 3.6 or greater 
 * Cmake 3.6 or greater 
 
-## To build 
+## To build
 
-```source install.bash``` 
+```
+pip install -e .
+```
 
 Test it with
 
-```python3 test_poly.py``` 
+```
+python examples/polytest.py
+```
  
