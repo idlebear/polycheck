@@ -5,101 +5,104 @@ Functions:
     contains(poly, points):
         Checks if a set of points are inside a given polygon using the winding number algorithm.
 
-    visibility(data, start, ends):
+    visibility(data, start, ends, max_range=None):
         Computes visibility from a start point to multiple end points on a grid using Bresenham's line algorithm.
 
-    visibility_from_region(data, starts, ends):
+    visibility_from_region(data, starts, ends, max_range=None):
         Computes visibility from multiple start points to multiple end points on a grid using Bresenham's line algorithm.
 
-    visibility_from_real_region(data, origin, resolution, starts, ends):
+    visibility_from_real_region(data, origin, resolution, starts, ends, max_range=None):
         Computes visibility from multiple start points to multiple end points on a grid with real-world coordinates using a floating-point grid traversal algorithm.
 
     faux_scan(polygons, origin, angle_start, angle_inc, num_rays, max_range, resolution):
         Performs a faux laser scan from an origin point, simulating rays at specified angles and increments, and checking for intersections with polygons.
+
+    initialize_cuda_context(device_id=0):
+        Creates and activates a new CUDA context on the specified device.
 """
 
 import pycuda.gpuarray as gpuarray
 import pycuda.driver as cuda
 
 # import pycuda.autoprimaryctx
-# import pycuda.autoinit # Removed to allow flexible context management
+import pycuda.autoinit  # Removed to allow flexible context management
 from pycuda.compiler import SourceModule
 
 import numpy as np
 import atexit  # For ensuring context cleanup on exit
 
-# --- CUDA Context Management ---
-_polycheck_module_context = (
-    None  # Stores the context active during SourceModule compilation
-)
-_polycheck_created_this_context = (
-    False  # True if polycheck created _polycheck_module_context
-)
+# # --- CUDA Context Management ---
+# _polycheck_module_context = (
+#     None  # Stores the context active during SourceModule compilation
+# )
+# _polycheck_created_this_context = (
+#     False  # True if polycheck created _polycheck_module_context
+# )
 
 
-def _establish_module_context():
-    """
-    Ensures a CUDA context is available for SourceModule compilation and sets
-    _polycheck_module_context. Called once when the module is loaded.
-    Prefers an existing current context. If none, creates one on device 0.
-    """
-    global _polycheck_module_context, _polycheck_created_this_context
-    # This function should only effectively run once at module import.
-    if _polycheck_module_context is not None:
-        return
+# def _establish_module_context():
+#     """
+#     Ensures a CUDA context is available for SourceModule compilation and sets
+#     _polycheck_module_context. Called once when the module is loaded.
+#     Prefers an existing current context. If none, creates one on device 0.
+#     """
+#     global _polycheck_module_context, _polycheck_created_this_context
+#     # This function should only effectively run once at module import.
+#     if _polycheck_module_context is not None:
+#         return
 
-    # Try to get an already current context
-    try:
-        _polycheck_module_context = cuda.Context.get_current()
-        # If successful, _polycheck_created_this_context remains False,
-        # as this module did not create this context.
-    except cuda.LogicError:  # No current context
-        cuda.init()  # Ensure CUDA driver is initialized
-        device = cuda.Device(0)  # Default to device 0
-        _polycheck_module_context = device.make_context()  # Creates and makes current
-        _polycheck_created_this_context = (
-            True  # Mark that polycheck created this context
-        )
-
-
-_establish_module_context()  # Ensure context is ready for SourceModule compilation
+#     # Try to get an already current context
+#     try:
+#         _polycheck_module_context = cuda.Context.get_current()
+#         # If successful, _polycheck_created_this_context remains False,
+#         # as this module did not create this context.
+#     except cuda.LogicError:  # No current context
+#         cuda.init()  # Ensure CUDA driver is initialized
+#         device = cuda.Device(0)  # Default to device 0
+#         _polycheck_module_context = device.make_context()  # Creates and makes current
+#         _polycheck_created_this_context = (
+#             True  # Mark that polycheck created this context
+#         )
 
 
-def _cleanup_polycheck_context_atexit():
-    """
-    Registered with atexit. Cleans up the CUDA context created by polycheck
-    at module load time, if one was indeed created by this module because
-    no other context was active at that time.
-    """
-    global _polycheck_module_context, _polycheck_created_this_context
-    if _polycheck_created_this_context and _polycheck_module_context:
-        try:
-            # A CUDA context must be popped from the current thread's context stack
-            # before it can be detached.
-            is_current_on_this_thread = False
-            try:
-                if cuda.Context.get_current() == _polycheck_module_context:
-                    is_current_on_this_thread = True
-            except cuda.LogicError:  # No context is current on this thread.
-                pass
-
-            if is_current_on_this_thread:
-                _polycheck_module_context.pop()
-
-            _polycheck_module_context.detach()  # Destroy the context
-
-            _polycheck_module_context = None
-            _polycheck_created_this_context = False
-        except cuda.Error:
-            # Suppress errors during atexit cleanup (e.g., if context was already destroyed)
-            pass
-        except Exception:
-            # Suppress any other unexpected errors during atexit cleanup
-            pass
+# _establish_module_context()  # Ensure context is ready for SourceModule compilation
 
 
-atexit.register(_cleanup_polycheck_context_atexit)
-# --- End CUDA Context Management ---
+# def _cleanup_polycheck_context_atexit():
+#     """
+#     Registered with atexit. Cleans up the CUDA context created by polycheck
+#     at module load time, if one was indeed created by this module because
+#     no other context was active at that time.
+#     """
+#     global _polycheck_module_context, _polycheck_created_this_context
+#     if _polycheck_created_this_context and _polycheck_module_context:
+#         try:
+#             # A CUDA context must be popped from the current thread's context stack
+#             # before it can be detached.
+#             is_current_on_this_thread = False
+#             try:
+#                 if cuda.Context.get_current() == _polycheck_module_context:
+#                     is_current_on_this_thread = True
+#             except cuda.LogicError:  # No context is current on this thread.
+#                 pass
+
+#             if is_current_on_this_thread:
+#                 _polycheck_module_context.pop()
+
+#             _polycheck_module_context.detach()  # Destroy the context
+
+#             _polycheck_module_context = None
+#             _polycheck_created_this_context = False
+#         except cuda.Error:
+#             # Suppress errors during atexit cleanup (e.g., if context was already destroyed)
+#             pass
+#         except Exception:
+#             # Suppress any other unexpected errors during atexit cleanup
+#             pass
+
+
+# atexit.register(_cleanup_polycheck_context_atexit)
+# # --- End CUDA Context Management ---
 
 BLOCK_SIZE = 32
 Y_BLOCK_SIZE = 32
@@ -195,13 +198,15 @@ mod = SourceModule(
 
     __device__ float
     line_real_observation( const float* data, int height, int width, float origin_x, float origin_y,
-                           float resolution, float src_x, float src_y, float end_x, float end_y ) {
+                           float resolution, float src_x, float src_y, float end_x, float end_y, float max_range = 0.0f ) {
 
         // Implement floating point fast grid traversal based on the work of Amanatides and Woo
         // (http://www.cse.yorku.ca/~amana/research/grid.pdf)
         float dx = end_x - src_x;
         float dy = end_y - src_y;
         float magnitude = sqrt(dx*dx + dy*dy);
+        float distance = 0.0f;
+
         // Handle zero magnitude case (src == end or very close)
         if (is_zero(magnitude)) {
             auto s_check_x = static_cast<int>(floorf((src_x - origin_x) / resolution));
@@ -265,7 +270,6 @@ mod = SourceModule(
             t_delta_y = 1.0f / (-dy);
         }
 
-
         auto observation = 1.0f;    // assume the point is initially viewable
         while( true ) {
             if( t_max_x < t_max_y ) {
@@ -287,6 +291,12 @@ mod = SourceModule(
                 break;
             }
 
+            distance += resolution;
+            if( max_range > 0.0f && distance > max_range ) {
+                observation = 0.0f;
+                break; // stop if we exceed the max_range
+            }
+
             // If we haven't reached the end of the line, apply the view probability to the current observation
             observation *= (1.0f - data[ sy * width + sx]);
             if( is_zero(observation) ) {          // early stopping condition
@@ -300,7 +310,7 @@ mod = SourceModule(
 
 
     __device__ float
-    line_observation( const float* data, int height, int width, int sx, int sy, int ex, int ey ) {
+    line_observation( const float* data, int height, int width, int sx, int sy, int ex, int ey, int max_range = 0 ) {
         // Using Bresenham implementation based on description found at:
         //   http://members.chello.at/~easyfilter/Bresenham.pdf
         auto dx = abs(sx-ex);
@@ -308,6 +318,7 @@ mod = SourceModule(
         auto dy = -abs(sy-ey);
         auto step_y = sy < ey ? 1 : -1;
         auto error = dx + dy;
+        auto steps = 0;
 
         if( sx == ex && sy == ey ) {
             return 1.0;
@@ -333,6 +344,12 @@ mod = SourceModule(
 
             if( sx == ex && sy == ey ) {
                 break;
+            }
+
+            steps += 1;
+            if( max_range > 0 && steps > max_range ) {
+                observation = 0;
+                break; // stop if we exceed the max_range
             }
 
             // If we haven't reached the end of the line, apply the view probability to the current observation
@@ -376,7 +393,7 @@ mod = SourceModule(
 
     __global__ void
     check_visibility(const float *data, const int height, const int width, const int *start,
-                          const int *ends, int num_ends, float *results ) {
+                          const int *ends, const int num_ends, const int max_range, float *results ) {
 
         auto start_index = blockIdx.x * blockDim.x + threadIdx.x;
         auto stride = blockDim.x * gridDim.x;
@@ -385,14 +402,14 @@ mod = SourceModule(
             int ex, ey;
             ex = ends[i*2];
             ey = ends[i*2+1];
-            results[ey*width + ex] = line_observation( data, height, width, start[0], start[1], ex, ey );
+            results[ey*width + ex] = line_observation( data, height, width, start[0], start[1], ex, ey, max_range );
         }
     }
 
     __global__ void
     check_real_visibility(const float *data, const int height, const int width,
                           const float origin_x, const float origin_y, const float resolution,
-                          const float *start, const float *ends, int num_ends, float *results ) {
+                          const float *start, const float *ends, const int num_ends, const float max_range, float *results ) {
 
         auto start_index = blockIdx.x * blockDim.x + threadIdx.x;
         auto stride = blockDim.x * gridDim.x;
@@ -401,14 +418,14 @@ mod = SourceModule(
             int ex, ey;
             ex = ends[i*2];
             ey = ends[i*2+1];
-            results[ey*width + ex] = line_real_observation( data, height, width, origin_x, origin_y, resolution, start[0], start[1], ex, ey );
+            results[ey*width + ex] = line_real_observation( data, height, width, origin_x, origin_y, resolution, start[0], start[1], ex, ey, max_range );
         }
     }
 
 
     __global__ void
-    check_region_visibility(const float *data, const int height, const int width, const int *starts, int num_starts,
-                          const int *ends, int num_ends, float *results ) {
+    check_region_visibility(const float *data, const int height, const int width, const int *starts, const int num_starts,
+                          const int *ends, const int num_ends, const int max_range, float *results ) {
 
         auto ends_index = blockIdx.x * blockDim.x + threadIdx.x;
         auto ends_stride = blockDim.x * gridDim.x;
@@ -422,7 +439,7 @@ mod = SourceModule(
             for (auto ei = ends_index; ei < num_ends; ei += ends_stride) {
                 auto ex = ends[ei*2];
                 auto ey = ends[ei*2+1];
-                results[si * num_ends + ei] = line_observation(data, height, width, sx, sy, ex, ey);
+                results[si * num_ends + ei] = line_observation(data, height, width, sx, sy, ex, ey, max_range);
             }
         }
     }
@@ -431,7 +448,8 @@ mod = SourceModule(
     __global__ void
     check_real_region_visibility(const float *data, const int height, const int width,
                                  const float origin_x, const float origin_y, const float resolution,
-                                 const float *starts, int num_starts, const float *ends, int num_ends, float *results ) {
+                                 const float *starts, const int num_starts, const float *ends,
+                                 const int num_ends, const float max_range, float *results ) {
 
         auto ends_index = blockIdx.x * blockDim.x + threadIdx.x;
         auto ends_stride = blockDim.x * gridDim.x;
@@ -446,7 +464,7 @@ mod = SourceModule(
                 auto ex = ends[ei*2];
                 auto ey = ends[ei*2+1];
                 results[si * num_ends + ei] = line_real_observation(data, height, width, origin_x, origin_y,
-                                                                    resolution, sx, sy, ex, ey);
+                                                                    resolution, sx, sy, ex, ey, max_range);
             }
         }
     }
@@ -547,7 +565,7 @@ def initialize_cuda_context(device_id=0):
     return context
 
 
-def visibility(data, start, ends):
+def visibility(data, start, ends, max_range=None):
     data = data.astype(np.float32)
     height, width = data.shape
     data_gpu = cuda.mem_alloc(data.nbytes)
@@ -561,6 +579,11 @@ def visibility(data, start, ends):
     ends_gpu = cuda.mem_alloc(ends.nbytes)
     cuda.memcpy_htod(ends_gpu, ends)
     num_ends = len(ends)
+
+    if max_range is None:
+        max_range = np.int32(0)
+    else:
+        max_range = np.int32(max_range)
 
     results_gpu = cuda.mem_alloc(data.nbytes)
     cuda.memset_d8(results_gpu, 0, data.nbytes)
@@ -577,6 +600,7 @@ def visibility(data, start, ends):
         start_gpu,
         ends_gpu,
         np.int32(num_ends),
+        max_range,
         results_gpu,
         block=(block_size, num_blocks, 1),
     )
@@ -588,7 +612,7 @@ def visibility(data, start, ends):
     return results
 
 
-def visibility_from_region(data, starts, ends):
+def visibility_from_region(data, starts, ends, max_range=None):
     data = data.astype(np.float32)
     height, width = data.shape
     data_gpu = cuda.mem_alloc(data.nbytes)
@@ -603,6 +627,11 @@ def visibility_from_region(data, starts, ends):
     ends_gpu = cuda.mem_alloc(ends.nbytes)
     cuda.memcpy_htod(ends_gpu, ends)
     num_ends = len(ends)
+
+    if max_range is None:
+        max_range = np.int32(0)
+    else:
+        max_range = np.int32(max_range)
 
     results_size = num_starts * num_ends * np.float32().nbytes
     results_gpu = cuda.mem_alloc(results_size)
@@ -624,6 +653,7 @@ def visibility_from_region(data, starts, ends):
         np.int32(num_starts),
         ends_gpu,
         np.int32(num_ends),
+        max_range,
         results_gpu,
         block=block,
         grid=grid,
@@ -636,7 +666,7 @@ def visibility_from_region(data, starts, ends):
     return results
 
 
-def visibility_from_real_region(data, origin, resolution, starts, ends):
+def visibility_from_real_region(data, origin, resolution, starts, ends, max_range=None):
     data = data.astype(np.float32)
     height, width = data.shape
     data_gpu = cuda.mem_alloc(data.nbytes)
@@ -651,6 +681,11 @@ def visibility_from_real_region(data, origin, resolution, starts, ends):
     ends_gpu = cuda.mem_alloc(ends.nbytes)
     cuda.memcpy_htod(ends_gpu, ends)
     num_ends = len(ends)
+
+    if max_range is None:
+        max_range = np.float32(0.0)
+    else:
+        max_range = np.float32(max_range)
 
     results_size = num_starts * num_ends * np.float32().nbytes
     results_gpu = cuda.mem_alloc(results_size)
@@ -675,6 +710,7 @@ def visibility_from_real_region(data, origin, resolution, starts, ends):
         np.int32(num_starts),
         ends_gpu,
         np.int32(num_ends),
+        max_range,
         results_gpu,
         block=block,
         grid=grid,
