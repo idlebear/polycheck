@@ -1,29 +1,29 @@
 # polycheck
 
-A short and sweet library to check whether a point is contained within an arbitrary polygon.  Created as an excuse to work with GPU/CUDA 
+A short and sweet library to check whether a point is contained within an arbitrary polygon.  Created as an excuse to work with GPU/CUDA
 code, and because Shapely is too slow...
 
 ## Results (preliminary)
 
-Here's a snapshot of the current execution time for a simple square polygon, with a grid of 
-1000x1000 cells.  Three methods are tested:
+Here's a snapshot of the current execution time for test of 1000x1000 points against a four-point polygon.  Three methods are tested:
 * Shapely -- create a polygon and test each individual point
-* Polycheck -- use the GPU to implement a parallel version of the Winding Number algorithm 
+* Polycheck -- use the GPU to implement a parallel version of the Winding Number algorithm
   published by [Dan Sunday](https://en.wikipedia.org/wiki/Point_in_polygon).
-* Local -- same algorithm as Polycheck, but implemented in Python as a benchmark of sorts.
+* CPU -- same algorithm as Polycheck, but implemented in Python and run on the CPU without parallelization.
 
 ```
-(conda) reggie$ python test_poly.py
-Shapely total time: 7.612478733062744
-Polycheck total time: 0.3291971683502197
-Local check total time: 13.260296821594238
-```
+(dev) reggie$ python examples/polytest.py
+Shapely total time: 6.861647129058838
+Polycheck total time: 0.28629112243652344
+Local check total time: 13.324239253997803```
+
+![Output](examples/polytest.png)
 
 ## Prerequisites
 
-* Cuda installed in /usr/local/cuda 
-* Python 3.6 or greater 
-* Cmake 3.6 or greater 
+* Cuda installed in /usr/local/cuda, tested against version 12.8
+* Python 3.12 or greater
+* warp-lang -- python wrapper of cuda libraries
 
 ## To build
 
@@ -36,4 +36,4 @@ Test it with
 ```
 python examples/polytest.py
 ```
- 
+

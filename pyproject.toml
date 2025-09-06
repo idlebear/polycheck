@@ -9,7 +9,7 @@ description = "A Python project for various ray-based visibility algorithms."
 readme = "README.md"
 dependencies = [
   "numpy",
-  "pycuda",
+  "warp-lang",
 ]
 requires-python = ">=3.8"
 authors = [

@@ -1,4 +1,4 @@
-import polycheck as poly
+import polycheck as pc
 from shapely.geometry import Polygon, Point
 
 import numpy as np
@@ -61,40 +61,51 @@ poly = [
     [-0.5, 0.5],
 ]
 
-dots = np.linspace(-8, 8, 200)
+dots = np.linspace(-8, 8, 1000)
 xs, ys = np.meshgrid(dots, dots, indexing="xy")
 pts = [[x, y] for x, y in zip(xs.flatten(), ys.flatten())]
 
+
+fig, ax = plt.subplots(1, 3, figsize=(12, 4))
+
 t0 = time.time()
-res = []
+s_res = []
 sh_poly = Polygon(poly)
 for pt in pts:
     pt = Point(pt)
-    res.append(sh_poly.contains(pt))
+    s_res.append(sh_poly.contains(pt))
 print(f"Shapely total time: {time.time()-t0}")
-plt.figure()
-plt.imshow(np.array(res).reshape(xs.shape))
-plt.title("Shapely")
+ax[0].imshow(np.array(s_res).reshape(xs.shape))
+ax[0].set_title("Shapely")
+
 
 t0 = time.time()
 pc_poly = np.array(poly).astype(np.float64)
 pc_pts = np.array(pts).astype(np.float64)
-res = poly.contains(pc_poly, pc_pts)
+pc_res = pc.contains(pc_poly, pc_pts)
 print(f"Polycheck total time: {time.time()-t0}")
-plt.figure()
-plt.imshow(np.array(res).reshape(xs.shape))
-plt.title("Polycheck")
+ax[1].imshow(np.array(pc_res).reshape(xs.shape))
+ax[1].set_title("Polycheck")
 
 t0 = time.time()
-res = []
+cpu_res = []
 for pt in pts:
-    res.append(contains(poly, pt))
+    cpu_res.append(contains(poly, pt))
 print(f"Local check total time: {time.time()-t0}")
-plt.figure()
-plt.imshow(np.array(res).reshape(xs.shape))
-plt.title("Local check")
+ax[2].imshow(np.array(cpu_res).reshape(xs.shape))
+ax[2].set_title("Local check")
 
-#
-plt.show(block=True)
+print(f"Shapely sum: {np.sum(s_res)} of {len(pts)} : {np.sum(s_res)/len(pts)*100:.1f}%")
+print(
+    f"Polycheck sum: {np.sum(pc_res)} of {len(pts)} : {np.sum(pc_res)/len(pts)*100:.1f}%"
+)
+print(
+    f"Local check sum: {np.sum(cpu_res)} of {len(pts)} : {np.sum(cpu_res)/len(pts)*100:.1f}%"
+)
+
+
+plt.tight_layout()
+plt.savefig("polytest.png")
+plt.close()
 
 print("done")

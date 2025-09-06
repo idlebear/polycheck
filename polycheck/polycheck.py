@@ -727,7 +727,10 @@ def faux_scan(
     polygons, origin, angle_start, angle_inc, num_rays, max_range, resolution
 ):
     if not len(polygons):
-        return np.ones((num_rays,), dtype=np.float32) * -1.0
+        return (
+            np.ones((num_rays,), dtype=np.float32) * -1.0,
+            np.ones((num_rays,), dtype=np.int32) * 0x7FFFFFFF,
+        )
 
     all_vertices = []
     polygon_indices = [0]
