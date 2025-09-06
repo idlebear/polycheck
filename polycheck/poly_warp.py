@@ -407,15 +407,15 @@ def test_point_in_polygon_indexed(
 
 @wp.func
 def line_range(
-    polygon_list: wp.array(dtype=float),
-    polygon_indices: wp.array(dtype=int),
+    polygon_list: wp.array(dtype=wp.float32),
+    polygon_indices: wp.array(dtype=wp.int32),
     num_polygons: int,
     sx: float,
     sy: float,
     angle: float,
     max_range: float,
     resolution: float,
-) -> float:
+):
     """Cast a ray and find range to first polygon intersection"""
     ex = float(sx)  # Dynamic variable
     ey = float(sy)  # Dynamic variable
@@ -444,8 +444,8 @@ def line_range(
 
 @wp.kernel
 def faux_ray_kernel(
-    polygon_list: wp.array(dtype=float),
-    polygon_indices: wp.array(dtype=int),
+    polygon_list: wp.array(dtype=wp.float32),
+    polygon_indices: wp.array(dtype=wp.int32),
     num_polygons: int,
     start_x: float,
     start_y: float,
@@ -454,14 +454,14 @@ def faux_ray_kernel(
     num_rays: int,
     max_range: float,
     resolution: float,
-    results: wp.array(dtype=float),
-    indices: wp.array(dtype=int),
+    results: wp.array(dtype=wp.float32),
+    indices: wp.array(dtype=wp.int32),
 ):
     """Kernel for faux laser scan computation"""
     i = wp.tid()
     if i < num_rays:
         angle = angle_start + float(i) * angle_increment
-        results[i], indices[i] = line_range(
+        result, index = line_range(
             polygon_list,
             polygon_indices,
             num_polygons,
@@ -471,6 +471,9 @@ def faux_ray_kernel(
             max_range,
             resolution,
         )
+        results[i] = result
+        indices[i] = index
+
 
 
 def contains(poly, points):
@@ -730,7 +733,7 @@ def faux_scan(
     Returns:
         numpy array of ranges to first obstacle for each ray, -1.0 if no obstacle found
     """
-    if not polygons or len(polygons) == 0:
+    if polygons is None or len(polygons) == 0:
         return (
             np.ones((num_rays,), dtype=np.float32) * -1.0,
             np.ones((num_rays,), dtype=np.int32) * 0x7FFFFFFF,
