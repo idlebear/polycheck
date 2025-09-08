@@ -726,23 +726,32 @@ def visibility_from_real_region(data, origin, resolution, starts, ends, max_rang
 def faux_scan(
     polygons, origin, angle_start, angle_inc, num_rays, max_range, resolution
 ):
-    polygons = polygons.astype(np.float32)
-    poly_data_size = polygons.nbytes
-
     if not len(polygons):
-        return np.ones((num_rays,), dtype=np.float32) * -1.0
+        return (
+            np.ones((num_rays,), dtype=np.float32) * -1.0,
+            np.ones((num_rays,), dtype=np.int32) * 0x7FFFFFFF,
+        )
 
-    index = 0
-    polygon_indices = [index]
+    all_vertices = []
+    polygon_indices = [0]
+
     for poly in polygons:
-        index += len(poly)
-        polygon_indices.append(index)
+        poly = np.asarray(poly, dtype=np.float32)
+        if poly.ndim == 1:
+            poly = poly.reshape(-1, 2)
+        all_vertices.extend(poly.flatten())
+        polygon_indices.append(
+            len(all_vertices) // 2
+        )  # Number of vertices, not coordinates
+
+    all_vertices = np.array(all_vertices, dtype=np.float32)
     polygon_indices = np.array(polygon_indices, dtype=np.int32)
+    poly_data_size = all_vertices.nbytes
 
     scan_size = num_rays * np.zeros((1,), dtype=np.float32).nbytes
 
     poly_gpu = cuda.mem_alloc(poly_data_size)
-    cuda.memcpy_htod(poly_gpu, polygons)
+    cuda.memcpy_htod(poly_gpu, all_vertices)
 
     poly_index_gpu = cuda.mem_alloc(polygon_indices.nbytes)
     cuda.memcpy_htod(poly_index_gpu, polygon_indices)
