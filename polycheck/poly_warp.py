@@ -110,24 +110,33 @@ def line_observation_bresenham(
     current_x = int(sx)  # Dynamic variable
     current_y = int(sy)  # Dynamic variable
     continue_loop = int(1)  # Dynamic variable
+    reached_end = int(0)  # Tracks whether we actually reached (ex, ey)
 
     while continue_loop == 1:
+        # Avoid double-counting the endpoint: bail out as soon as we are sitting on it
+        if current_x == ex and current_y == ey:
+            reached_end = 1
+            break
+
         e2 = 2 * error
         if e2 >= dy:
             if current_x == ex:
                 continue_loop = 0
+                reached_end = 1
             else:
                 error += dy
                 current_x += step_x
         if e2 <= dx and continue_loop == 1:
             if current_y == ey:
                 continue_loop = 0
+                reached_end = 1
             else:
                 error += dx
                 current_y += step_y
 
         if continue_loop == 1 and current_x == ex and current_y == ey:
             continue_loop = 0
+            reached_end = 1
 
         if continue_loop == 1:
             steps += 1
@@ -151,6 +160,22 @@ def line_observation_bresenham(
                 if observation < 2e-6:
                     observation = 0.0
                     continue_loop = 0
+
+    if reached_end == 0 and current_x == ex and current_y == ey:
+        reached_end = 1
+
+    # If we reached the destination cell, include its occupancy in the observation
+    if reached_end == 1:
+        if (
+            ex < 0
+            or ex >= width
+            or ey < 0
+            or ey >= height
+        ):
+            return 0.0
+        observation *= 1.0 - data[ey * width + ex]
+        if observation < 2e-6:
+            observation = 0.0
 
     return observation
 

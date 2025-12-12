@@ -339,10 +339,18 @@ mod = SourceModule(
         }
 
         auto observation = 1.0;    // assume the point is initially viewable
+        auto reached_end = false;
         for( ;; ) {
+            // Avoid double-counting the endpoint: break as soon as we are on it
+            if( sx == ex && sy == ey ) {
+                reached_end = true;
+                break;
+            }
+
             auto e2 = 2 * error;
             if( e2 >= dy ) {
                 if( sx == ex ) {
+                    reached_end = true;
                     break;
                 }
                 error += dy;
@@ -350,6 +358,7 @@ mod = SourceModule(
             }
             if( e2 <= dx ) {
                 if( sy == ey ) {
+                    reached_end = true;
                     break;
                 }
                 error += dx;
@@ -357,6 +366,7 @@ mod = SourceModule(
             }
 
             if( sx == ex && sy == ey ) {
+                reached_end = true;
                 break;
             }
 
@@ -371,6 +381,17 @@ mod = SourceModule(
             if( observation < FLT_EPSILON*2 ) {          // early stopping condition
                 observation = 0;
                 break;
+            }
+        }
+
+        reached_end = reached_end || (sx == ex && sy == ey);
+        if( reached_end ) {
+            if( sx < 0 || sx >= width || sy < 0 || sy >= height ) {
+                return 0.0f;
+            }
+            observation *= (1.0f - data[ sy * width + sx ]);
+            if( observation < FLT_EPSILON*2 ) {
+                observation = 0.0f;
             }
         }
 
