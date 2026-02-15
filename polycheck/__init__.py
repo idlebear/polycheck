@@ -1,4 +1,4 @@
-from .poly_warp import (
+from .polycheck import (
     contains,
     visibility,
     visibility_from_region,

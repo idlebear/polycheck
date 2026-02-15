@@ -173,7 +173,10 @@ def line_observation_real(
     dx = end_x - src_x
     dy = end_y - src_y
     magnitude = wp.sqrt(dx * dx + dy * dy)
-    distance = float(0.0)  # Dynamic variable
+
+    # If the target is beyond max_range, it's not visible.
+    if max_range > 0.0 and magnitude > max_range:
+        return 0.0
 
     # Handle zero magnitude case
     if is_zero(magnitude):
@@ -201,6 +204,14 @@ def line_observation_real(
     if sx == ex and sy == ey:
         return 1.0
 
+    # Calculate the distance to the center of the target cell for a robust termination check
+    end_center_x = (float(ex) + 0.5) * resolution + origin_x
+    end_center_y = (float(ey) + 0.5) * resolution + origin_y
+    dist_to_end_center = wp.sqrt(
+        (end_center_x - src_x) * (end_center_x - src_x)
+        + (end_center_y - src_y) * (end_center_y - src_y)
+    )
+
     # Set up grid traversal
     step_x = 0
     t_max_x = float(0.0)  # Dynamic variable
@@ -212,12 +223,12 @@ def line_observation_real(
         t_delta_x = 1e30
     elif dx > 0.0:
         step_x = 1
-        t_max_x = (wp.floor(rx) + 1.0 - rx) / dx
-        t_delta_x = 1.0 / dx
+        t_max_x = (wp.floor(rx) + 1.0 - rx) * resolution / dx
+        t_delta_x = resolution / dx
     else:
         step_x = -1
-        t_max_x = (rx - wp.floor(rx)) / (-dx)
-        t_delta_x = 1.0 / (-dx)
+        t_max_x = (rx - wp.floor(rx)) * resolution / (-dx)
+        t_delta_x = resolution / (-dx)
 
     step_y = 0
     t_max_y = float(0.0)  # Dynamic variable
@@ -229,19 +240,22 @@ def line_observation_real(
         t_delta_y = 1e30
     elif dy > 0.0:
         step_y = 1
-        t_max_y = (wp.floor(ry) + 1.0 - ry) / dy
-        t_delta_y = 1.0 / dy
+        t_max_y = (wp.floor(ry) + 1.0 - ry) * resolution / dy
+        t_delta_y = resolution / dy
     else:
         step_y = -1
-        t_max_y = (ry - wp.floor(ry)) / (-dy)
-        t_delta_y = 1.0 / (-dy)
+        t_max_y = (ry - wp.floor(ry)) * resolution / (-dy)
+        t_delta_y = resolution / (-dy)
 
     observation = float(1.0)  # Dynamic variable
     current_sx = int(sx)  # Dynamic variable
     current_sy = int(sy)  # Dynamic variable
-    continue_loop = int(1)  # Dynamic variable
 
-    while continue_loop == 1:
+    while True:
+        # Robust termination check: stop if we've passed the center of the target cell
+        if wp.min(t_max_x, t_max_y) > magnitude:  # dist_to_end_center:
+            break
+
         if t_max_x < t_max_y:
             current_sx += step_x
             t_max_x += t_delta_x
@@ -251,30 +265,23 @@ def line_observation_real(
 
         # Check if reached target
         if current_sx == ex and current_sy == ey:
-            continue_loop = 0
+            break
 
         # Check grid boundaries
-        if continue_loop == 1 and (
+        if (
             current_sx < 0
             or current_sx >= width
             or current_sy < 0
             or current_sy >= height
         ):
             observation = 0.0
-            continue_loop = 0
+            break
 
-        if continue_loop == 1:
-            distance += resolution
-            if max_range > 0.0 and distance > max_range:
-                observation = 0.0
-                continue_loop = 0
-
-            # Apply view probability
-            if continue_loop == 1:
-                observation *= 1.0 - data[current_sy * width + current_sx]
-                if is_zero(observation):
-                    observation = 0.0
-                    continue_loop = 0
+        # Apply view probability
+        observation *= 1.0 - data[current_sy * width + current_sx]
+        if is_zero(observation):
+            observation = 0.0
+            break
 
     return observation
 
@@ -475,7 +482,6 @@ def faux_ray_kernel(
         indices[i] = index
 
 
-
 def contains(poly, points):
     """
     Check if a set of points are inside a given polygon using the winding number algorithm.
@@ -658,10 +664,11 @@ def visibility_from_real_region(data, origin, resolution, starts, ends, max_rang
     Returns:
         1D numpy array of visibility values, shape (n_starts * n_ends)
     """
-    data = np.asarray(data, dtype=np.float32)
-    origin = np.asarray(origin, dtype=np.float32)
-    starts = np.asarray(starts, dtype=np.float32)
-    ends = np.asarray(ends, dtype=np.float32)
+
+    # data = np.asarray(data, dtype=np.float32)
+    # origin = np.asarray(origin, dtype=np.float32)
+    # starts = np.asarray(starts, dtype=np.float32)
+    # ends = np.asarray(ends, dtype=np.float32)
 
     height, width = data.shape
     num_starts = len(starts)
@@ -672,16 +679,17 @@ def visibility_from_real_region(data, origin, resolution, starts, ends, max_rang
     else:
         max_range = float(max_range)
 
-    # Ensure 2D arrays
-    if starts.ndim == 1:
-        starts = starts.reshape(-1, 2)
-    if ends.ndim == 1:
-        ends = ends.reshape(-1, 2)
+    assert (
+        starts.ndim == 2 and starts.shape[1] == 2
+    ), "Starts must be a 2D array with shape (n, 2)"
+    assert (
+        ends.ndim == 2 and ends.shape[1] == 2
+    ), "Ends must be a 2D array with shape (n, 2)"
 
     # Flatten arrays for Warp kernels
-    starts_flat = starts.flatten()
-    ends_flat = ends.flatten()
-    data_flat = data.flatten()
+    starts_flat = starts.ravel()
+    ends_flat = ends.ravel()
+    data_flat = data.ravel()
 
     # Create Warp arrays
     data_wp = wp.array(data_flat, dtype=wp.float32, device="cuda")

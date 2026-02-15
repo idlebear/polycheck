@@ -24,8 +24,9 @@ Functions:
 import pycuda.gpuarray as gpuarray
 import pycuda.driver as cuda
 
-# import pycuda.autoprimaryctx
-import pycuda.autoinit  # Removed to allow flexible context management
+import pycuda.autoprimaryctx
+
+# import pycuda.autoinit  # Removed to allow flexible context management
 from pycuda.compiler import SourceModule
 
 import numpy as np
@@ -198,21 +199,27 @@ mod = SourceModule(
 
     __device__ float
     line_real_observation( const float* data, int height, int width, float origin_x, float origin_y,
-                           float resolution, float src_x, float src_y, float end_x, float end_y, float max_range = 0.0f ) {
+                           float resolution, float src_x, float src_y, float end_x, float end_y, float max_range ) {
 
         // Implement floating point fast grid traversal based on the work of Amanatides and Woo
         // (http://www.cse.yorku.ca/~amana/research/grid.pdf)
         float dx = end_x - src_x;
         float dy = end_y - src_y;
         float magnitude = sqrt(dx*dx + dy*dy);
-        float distance = 0.0f;
+
+        // If the target is beyond max_range, it's not visible.
+        if (max_range > 0.0f && magnitude > max_range) {
+            return 0.0f;
+        }
 
         // Handle zero magnitude case (src == end or very close)
         if (is_zero(magnitude)) {
             auto s_check_x = static_cast<int>(floorf((src_x - origin_x) / resolution));
             auto s_check_y = static_cast<int>(floorf((src_y - origin_y) / resolution));
-            if (s_check_x < 0 || s_check_x >= width || s_check_y < 0 || s_check_y >= height) return 0.0f;
-            return 1.0f; // Start and end are same, and inside grid: visible by default
+            if (s_check_x < 0 || s_check_x >= width || s_check_y < 0 || s_check_y >= height) {
+                return 0.0f;
+            }
+            return 1.0f;
         }
         dx /= (magnitude);
         dy /= (magnitude);
@@ -234,6 +241,11 @@ mod = SourceModule(
             return 1.0f;
         }
 
+        // Calculate the distance to the center of the target cell for a robust termination check
+        // float end_center_x = (ex + 0.5f) * resolution + origin_x;
+        // float end_center_y = (ey + 0.5f) * resolution + origin_y;
+        // float dist_to_end_center = sqrtf(powf(end_center_x - src_x, 2) + powf(end_center_y - src_y, 2));
+
         int step_x;
         float t_max_x;
         float t_delta_x;
@@ -244,12 +256,12 @@ mod = SourceModule(
             t_delta_x = FLT_MAX;
         } else if( dx > 0.0f ) {
             step_x = 1;
-            t_max_x = (floorf(rx) + 1.0f - rx) / dx;
-            t_delta_x = 1.0f / dx;
+            t_max_x = (floorf(rx) + 1.0f - rx) * resolution / dx;
+            t_delta_x = resolution / dx;
         } else { // dx < 0.0f
             step_x = -1;
-            t_max_x = (rx - floorf(rx)) / (-dx);
-            t_delta_x = 1.0f / (-dx);
+            t_max_x = (rx - floorf(rx)) * resolution / (-dx);
+            t_delta_x = resolution / (-dx);
         }
 
         int step_y;
@@ -262,16 +274,23 @@ mod = SourceModule(
             t_delta_y = FLT_MAX;
         } else if( dy > 0.0f ) {
             step_y = 1;
-            t_max_y = (floorf(ry) + 1.0f - ry) / dy;
-            t_delta_y = 1.0f / dy;
+            t_max_y = (floorf(ry) + 1.0f - ry) * resolution / dy;
+            t_delta_y = resolution / dy;
         } else { // dy < 0.0f
             step_y = -1;
-            t_max_y = (ry - floorf(ry)) / (-dy);
-            t_delta_y = 1.0f / (-dy);
+            t_max_y = (ry - floorf(ry)) * resolution / (-dy);
+            t_delta_y = resolution / (-dy);
         }
 
         auto observation = 1.0f;    // assume the point is initially viewable
+
         while( true ) {
+
+            // Robust termination check: stop if we've passed the length of the line
+            if (fminf(t_max_x, t_max_y) > magnitude ) { // dist_to_end_center) {
+                break;
+            }
+
             if( t_max_x < t_max_y ) {
                 sx += step_x;
                 t_max_x += t_delta_x;
@@ -291,18 +310,13 @@ mod = SourceModule(
                 break;
             }
 
-            distance += resolution;
-            if( max_range > 0.0f && distance > max_range ) {
-                observation = 0.0f;
-                break; // stop if we exceed the max_range
-            }
-
             // If we haven't reached the end of the line, apply the view probability to the current observation
             observation *= (1.0f - data[ sy * width + sx]);
             if( is_zero(observation) ) {          // early stopping condition
                 observation = 0.0f; // Ensure it's exactly zero
                 break;
             }
+
         }
 
         return observation;
@@ -418,7 +432,7 @@ mod = SourceModule(
             int ex, ey;
             ex = ends[i*2];
             ey = ends[i*2+1];
-            results[ey*width + ex] = line_real_observation( data, height, width, origin_x, origin_y, resolution, start[0], start[1], ex, ey, max_range );
+            results[ey*width + ex] = line_real_observation( data, height, width, origin_x, origin_y, resolution, start[0], start[1], ex, ey, max_range);
         }
     }
 
@@ -449,7 +463,8 @@ mod = SourceModule(
     check_real_region_visibility(const float *data, const int height, const int width,
                                  const float origin_x, const float origin_y, const float resolution,
                                  const float *starts, const int num_starts, const float *ends,
-                                 const int num_ends, const float max_range, float *results ) {
+                                 const int num_ends, const float max_range, float *results
+                                 ) {
 
         auto ends_index = blockIdx.x * blockDim.x + threadIdx.x;
         auto ends_stride = blockDim.x * gridDim.x;
