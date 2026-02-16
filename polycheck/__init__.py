@@ -3,6 +3,8 @@ from .polycheck import (
     visibility,
     visibility_from_region,
     visibility_from_real_region,
+    sensor_visibility_from_region,
+    sensor_visibility_from_real_region,
     faux_scan,
 )
 
@@ -12,5 +14,7 @@ __all__ = [
     "visibility",
     "visibility_from_region",
     "visibility_from_real_region",
+    "sensor_visibility_from_region",
+    "sensor_visibility_from_real_region",
     "faux_scan",
 ]

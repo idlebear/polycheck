@@ -14,6 +14,12 @@ Functions:
     visibility_from_real_region(data, origin, resolution, starts, ends, max_range=None):
         Computes visibility from multiple start points to multiple end points on a grid with real-world coordinates using a floating-point grid traversal algorithm.
 
+    sensor_visibility_from_region(data, sensors):
+        Computes per-sensor clear probabilities over all grid cells using Bresenham rays and sensor range/FOV constraints.
+
+    sensor_visibility_from_real_region(data, origin, resolution, sensors):
+        Computes per-sensor clear probabilities over all grid cells using floating-point grid traversal and sensor range/FOV constraints.
+
     faux_scan(polygons, origin, angle_start, angle_inc, num_rays, max_range, resolution):
         Performs a faux laser scan from an origin point, simulating rays at specified angles and increments, and checking for intersections with polygons.
 
@@ -127,6 +133,49 @@ mod = SourceModule(
     __device__
     inline bool is_equal(float f1, float f2){
         return fabs(f1 - f2) < FLT_EPSILON;
+    }
+
+    constexpr float PI_F = 3.14159265358979323846f;
+    constexpr float TWO_PI_F = 6.28318530717958647692f;
+
+    __device__
+    inline float clamp01(float value){
+        return fminf(1.0f, fmaxf(0.0f, value));
+    }
+
+    __device__
+    inline float wrap_to_pi(float angle){
+        while (angle > PI_F) {
+            angle -= TWO_PI_F;
+        }
+        while (angle < -PI_F) {
+            angle += TWO_PI_F;
+        }
+        return angle;
+    }
+
+    __device__
+    inline bool in_sensor_fov(float sx, float sy, float tx, float ty, float range, float direction, float fov){
+        auto dx = tx - sx;
+        auto dy = ty - sy;
+        auto distance = sqrtf(dx * dx + dy * dy);
+
+        if (range > 0.0f && distance > range) {
+            return false;
+        }
+
+        if (fov > 0.0f && fov < (TWO_PI_F - 1e-6f)) {
+            if (is_zero(dx) && is_zero(dy)) {
+                return true;
+            }
+            auto bearing = atan2f(dy, dx);
+            auto angle_delta = fabsf(wrap_to_pi(bearing - direction));
+            if (angle_delta > (0.5f * fov)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
 
@@ -339,18 +388,15 @@ mod = SourceModule(
         }
 
         auto observation = 1.0;    // assume the point is initially viewable
-        auto reached_end = false;
         for( ;; ) {
-            // Avoid double-counting the endpoint: break as soon as we are on it
+            // Exclude endpoint: stop as soon as we are on it.
             if( sx == ex && sy == ey ) {
-                reached_end = true;
                 break;
             }
 
             auto e2 = 2 * error;
             if( e2 >= dy ) {
                 if( sx == ex ) {
-                    reached_end = true;
                     break;
                 }
                 error += dy;
@@ -358,7 +404,6 @@ mod = SourceModule(
             }
             if( e2 <= dx ) {
                 if( sy == ey ) {
-                    reached_end = true;
                     break;
                 }
                 error += dx;
@@ -366,7 +411,6 @@ mod = SourceModule(
             }
 
             if( sx == ex && sy == ey ) {
-                reached_end = true;
                 break;
             }
 
@@ -384,18 +428,177 @@ mod = SourceModule(
             }
         }
 
-        reached_end = reached_end || (sx == ex && sy == ey);
-        if( reached_end ) {
-            if( sx < 0 || sx >= width || sy < 0 || sy >= height ) {
+        return observation;
+    }
+
+    __device__ float
+    line_observation_sum(const float* data, int height, int width, int sx, int sy, int ex, int ey) {
+        if (sx < 0 || sx >= width || sy < 0 || sy >= height) {
+            return 0.0f;
+        }
+        if (ex < 0 || ex >= width || ey < 0 || ey >= height) {
+            return 0.0f;
+        }
+        if (sx == ex && sy == ey) {
+            return 1.0f;
+        }
+
+        auto dx = abs(sx - ex);
+        auto step_x = sx < ex ? 1 : -1;
+        auto dy = -abs(sy - ey);
+        auto step_y = sy < ey ? 1 : -1;
+        auto error = dx + dy;
+
+        auto blocked_sum = 0.0f;
+        for (;;) {
+            if (sx == ex && sy == ey) {
+                break;
+            }
+
+            auto e2 = 2 * error;
+            if (e2 >= dy) {
+                if (sx == ex) {
+                    break;
+                }
+                error += dy;
+                sx += step_x;
+            }
+            if (e2 <= dx) {
+                if (sy == ey) {
+                    break;
+                }
+                error += dx;
+                sy += step_y;
+            }
+
+            // Exclude destination from blocking sum.
+            if (sx == ex && sy == ey) {
+                break;
+            }
+
+            if (sx < 0 || sx >= width || sy < 0 || sy >= height) {
                 return 0.0f;
             }
-            observation *= (1.0f - data[ sy * width + sx ]);
-            if( observation < FLT_EPSILON*2 ) {
-                observation = 0.0f;
+
+            blocked_sum += data[sy * width + sx];
+            if (blocked_sum >= 1.0f) {
+                return 0.0f;
             }
         }
 
-        return observation;
+        return clamp01(1.0f - blocked_sum);
+    }
+
+    __device__ float
+    line_real_observation_sum(const float* data, int height, int width, float origin_x, float origin_y,
+                        float resolution, float src_x, float src_y, float end_x, float end_y, float max_range) {
+        auto dx = end_x - src_x;
+        auto dy = end_y - src_y;
+        auto magnitude = sqrtf(dx * dx + dy * dy);
+
+        if (max_range > 0.0f && magnitude > max_range) {
+            return 0.0f;
+        }
+
+        if (is_zero(magnitude)) {
+            auto s_check_x = static_cast<int>(floorf((src_x - origin_x) / resolution));
+            auto s_check_y = static_cast<int>(floorf((src_y - origin_y) / resolution));
+            if (s_check_x < 0 || s_check_x >= width || s_check_y < 0 || s_check_y >= height) {
+                return 0.0f;
+            }
+            return 1.0f;
+        }
+
+        dx /= magnitude;
+        dy /= magnitude;
+
+        auto rx = (src_x - origin_x) / resolution;
+        auto sx = static_cast<int>(floorf(rx));
+        auto ry = (src_y - origin_y) / resolution;
+        auto sy = static_cast<int>(floorf(ry));
+
+        if (sx < 0 || sx >= width || sy < 0 || sy >= height) {
+            return 0.0f;
+        }
+
+        auto ex = static_cast<int>(floorf((end_x - origin_x) / resolution));
+        auto ey = static_cast<int>(floorf((end_y - origin_y) / resolution));
+
+        if (ex < 0 || ex >= width || ey < 0 || ey >= height) {
+            return 0.0f;
+        }
+
+        if (sx == ex && sy == ey) {
+            return 1.0f;
+        }
+
+        int step_x;
+        float t_max_x;
+        float t_delta_x;
+
+        if (is_zero(dx)) {
+            step_x = 0;
+            t_max_x = FLT_MAX;
+            t_delta_x = FLT_MAX;
+        } else if (dx > 0.0f) {
+            step_x = 1;
+            t_max_x = (floorf(rx) + 1.0f - rx) * resolution / dx;
+            t_delta_x = resolution / dx;
+        } else {
+            step_x = -1;
+            t_max_x = (rx - floorf(rx)) * resolution / (-dx);
+            t_delta_x = resolution / (-dx);
+        }
+
+        int step_y;
+        float t_max_y;
+        float t_delta_y;
+
+        if (is_zero(dy)) {
+            step_y = 0;
+            t_max_y = FLT_MAX;
+            t_delta_y = FLT_MAX;
+        } else if (dy > 0.0f) {
+            step_y = 1;
+            t_max_y = (floorf(ry) + 1.0f - ry) * resolution / dy;
+            t_delta_y = resolution / dy;
+        } else {
+            step_y = -1;
+            t_max_y = (ry - floorf(ry)) * resolution / (-dy);
+            t_delta_y = resolution / (-dy);
+        }
+
+        auto blocked_sum = 0.0f;
+
+        while (true) {
+            if (fminf(t_max_x, t_max_y) > magnitude) {
+                break;
+            }
+
+            if (t_max_x < t_max_y) {
+                sx += step_x;
+                t_max_x += t_delta_x;
+            } else {
+                sy += step_y;
+                t_max_y += t_delta_y;
+            }
+
+            // Exclude destination from blocking sum.
+            if (sx == ex && sy == ey) {
+                break;
+            }
+
+            if (sx < 0 || sx >= width || sy < 0 || sy >= height) {
+                return 0.0f;
+            }
+
+            blocked_sum += data[sy * width + sx];
+            if (blocked_sum >= 1.0f) {
+                return 0.0f;
+            }
+        }
+
+        return clamp01(1.0f - blocked_sum);
     }
 
     __device__ float
@@ -501,6 +704,92 @@ mod = SourceModule(
                 auto ey = ends[ei*2+1];
                 results[si * num_ends + ei] = line_real_observation(data, height, width, origin_x, origin_y,
                                                                     resolution, sx, sy, ex, ey, max_range);
+            }
+        }
+    }
+
+    __global__ void
+    check_sensor_region_visibility(const float *data, const int height, const int width,
+                                   const float *sensors, const int num_sensors, float *results) {
+
+        auto cell_index = blockIdx.x * blockDim.x + threadIdx.x;
+        auto cell_stride = blockDim.x * gridDim.x;
+        auto sensor_index = blockIdx.y * blockDim.y + threadIdx.y;
+        auto sensor_stride = blockDim.y * gridDim.y;
+        auto num_cells = height * width;
+
+        for (auto si = sensor_index; si < num_sensors; si += sensor_stride) {
+            auto sensor_x = sensors[si * 5];
+            auto sensor_y = sensors[si * 5 + 1];
+            auto sensor_range = sensors[si * 5 + 2];
+            auto sensor_direction = sensors[si * 5 + 3];
+            auto sensor_fov = sensors[si * 5 + 4];
+
+            auto sx = epsilon_round(sensor_x);
+            auto sy = epsilon_round(sensor_y);
+
+            for (auto ei = cell_index; ei < num_cells; ei += cell_stride) {
+                auto ex = ei % width;
+                auto ey = ei / width;
+
+                if (sensor_range <= 0.0f) {
+                    results[si * num_cells + ei] = (ex == sx && ey == sy) ? 1.0f : 0.0f;
+                    continue;
+                }
+
+                if (!in_sensor_fov(static_cast<float>(sx), static_cast<float>(sy),
+                                   static_cast<float>(ex), static_cast<float>(ey),
+                                   sensor_range, sensor_direction, sensor_fov)) {
+                    results[si * num_cells + ei] = 0.0f;
+                    continue;
+                }
+
+                results[si * num_cells + ei] = line_observation_sum(data, height, width, sx, sy, ex, ey);
+            }
+        }
+    }
+
+    __global__ void
+    check_sensor_real_region_visibility(const float *data, const int height, const int width,
+                                        const float origin_x, const float origin_y, const float resolution,
+                                        const float *sensors, const int num_sensors, float *results) {
+
+        auto cell_index = blockIdx.x * blockDim.x + threadIdx.x;
+        auto cell_stride = blockDim.x * gridDim.x;
+        auto sensor_index = blockIdx.y * blockDim.y + threadIdx.y;
+        auto sensor_stride = blockDim.y * gridDim.y;
+        auto num_cells = height * width;
+
+        for (auto si = sensor_index; si < num_sensors; si += sensor_stride) {
+            auto sensor_x = sensors[si * 5];
+            auto sensor_y = sensors[si * 5 + 1];
+            auto sensor_range = sensors[si * 5 + 2];
+            auto sensor_direction = sensors[si * 5 + 3];
+            auto sensor_fov = sensors[si * 5 + 4];
+            auto sensor_cell_x = static_cast<int>(floorf((sensor_x - origin_x) / resolution));
+            auto sensor_cell_y = static_cast<int>(floorf((sensor_y - origin_y) / resolution));
+
+            for (auto ei = cell_index; ei < num_cells; ei += cell_stride) {
+                auto ex = ei % width;
+                auto ey = ei / width;
+                auto target_x = origin_x + (static_cast<float>(ex) + 0.5f) * resolution;
+                auto target_y = origin_y + (static_cast<float>(ey) + 0.5f) * resolution;
+
+                if (sensor_range <= 0.0f) {
+                    results[si * num_cells + ei] = (ex == sensor_cell_x && ey == sensor_cell_y) ? 1.0f : 0.0f;
+                    continue;
+                }
+
+                if (!in_sensor_fov(sensor_x, sensor_y, target_x, target_y,
+                                   sensor_range, sensor_direction, sensor_fov)) {
+                    results[si * num_cells + ei] = 0.0f;
+                    continue;
+                }
+
+                results[si * num_cells + ei] = line_real_observation_sum(
+                    data, height, width, origin_x, origin_y, resolution,
+                    sensor_x, sensor_y, target_x, target_y, sensor_range
+                );
             }
         }
     }
@@ -757,6 +1046,287 @@ def visibility_from_real_region(data, origin, resolution, starts, ends, max_rang
     cuda.memcpy_dtoh(results, results_gpu)
 
     return results
+
+
+def _validate_sensors(sensors):
+    sensors = np.asarray(sensors, dtype=np.float32)
+    if sensors.ndim != 2 or sensors.shape[1] != 5:
+        raise ValueError(
+            "sensors must have shape (num_sensors, 5) with columns "
+            "[x, y, range, direction, fov]"
+        )
+    return sensors
+
+
+def _wrap_to_pi_numpy(angle):
+    return (angle + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def _epsilon_round_numpy(value):
+    rounded = np.rint(value)
+    if np.abs(value - rounded) < 2e-6:
+        return int(rounded)
+    return int(value)
+
+
+def _sensor_coverage_mask_grid(height, width, sensors):
+    yy, xx = np.meshgrid(
+        np.arange(height, dtype=np.float32),
+        np.arange(width, dtype=np.float32),
+        indexing="ij",
+    )
+    mask = np.zeros((len(sensors), height, width), dtype=bool)
+
+    for i, sensor in enumerate(sensors):
+        sx, sy, sensor_range, direction, fov = sensor
+        sx_i = _epsilon_round_numpy(float(sx))
+        sy_i = _epsilon_round_numpy(float(sy))
+
+        if sensor_range <= 0.0:
+            if 0 <= sx_i < width and 0 <= sy_i < height:
+                mask[i, sy_i, sx_i] = True
+            continue
+
+        dx = xx - float(sx_i)
+        dy = yy - float(sy_i)
+        distance = np.sqrt(dx * dx + dy * dy)
+        in_range = distance <= float(sensor_range) + 1e-6
+
+        if 0.0 < float(fov) < (2.0 * np.pi - 1e-6):
+            bearing = np.arctan2(dy, dx)
+            angle_delta = np.abs(_wrap_to_pi_numpy(bearing - float(direction)))
+            in_fov = (distance <= 1e-8) | (angle_delta <= (0.5 * float(fov) + 1e-6))
+        else:
+            in_fov = np.ones((height, width), dtype=bool)
+
+        mask[i] = in_range & in_fov
+
+    return mask
+
+
+def _sensor_coverage_mask_real(height, width, origin, resolution, sensors):
+    yy, xx = np.meshgrid(
+        np.arange(height, dtype=np.float32),
+        np.arange(width, dtype=np.float32),
+        indexing="ij",
+    )
+    tx = float(origin[0]) + (xx + 0.5) * float(resolution)
+    ty = float(origin[1]) + (yy + 0.5) * float(resolution)
+
+    mask = np.zeros((len(sensors), height, width), dtype=bool)
+    for i, sensor in enumerate(sensors):
+        sx, sy, sensor_range, direction, fov = sensor
+
+        if sensor_range <= 0.0:
+            sensor_cell_x = int(
+                np.floor((float(sx) - float(origin[0])) / float(resolution))
+            )
+            sensor_cell_y = int(
+                np.floor((float(sy) - float(origin[1])) / float(resolution))
+            )
+            if 0 <= sensor_cell_x < width and 0 <= sensor_cell_y < height:
+                mask[i, sensor_cell_y, sensor_cell_x] = True
+            continue
+
+        dx = tx - float(sx)
+        dy = ty - float(sy)
+        distance = np.sqrt(dx * dx + dy * dy)
+        in_range = distance <= float(sensor_range) + 1e-6
+
+        if 0.0 < float(fov) < (2.0 * np.pi - 1e-6):
+            bearing = np.arctan2(dy, dx)
+            angle_delta = np.abs(_wrap_to_pi_numpy(bearing - float(direction)))
+            in_fov = (distance <= 1e-8) | (angle_delta <= (0.5 * float(fov) + 1e-6))
+        else:
+            in_fov = np.ones((height, width), dtype=bool)
+
+        mask[i] = in_range & in_fov
+
+    return mask
+
+
+def _combine_sensor_observations(per_sensor_observation, coverage_mask, combine):
+    if combine == "union":
+        # Out-of-coverage sensors contribute 0 observation probability.
+        effective = np.where(coverage_mask, per_sensor_observation, 0.0)
+        combined = 1.0 - np.prod(1.0 - effective, axis=0)
+    elif combine == "product":
+        # Out-of-coverage sensors are neutral factors for multiplicative fusion.
+        effective = np.where(coverage_mask, per_sensor_observation, 1.0)
+        combined = np.prod(effective, axis=0)
+        combined = np.where(np.any(coverage_mask, axis=0), combined, 0.0)
+    else:
+        raise ValueError("combine must be 'union' or 'product'")
+
+    return np.clip(combined, 0.0, 1.0).astype(np.float32)
+
+
+def sensor_visibility_from_region(data, sensors, combine="union"):
+    """
+    Compute per-sensor clear probabilities over every grid cell using Bresenham rays.
+
+    Args:
+        data (ndarray): Occupancy grid of shape (H, W), where each cell stores occupancy
+            probability in [0, 1].
+        sensors (array-like): Shape (M, 5) with columns [x, y, range, direction, fov].
+            Positions are interpreted in grid-cell coordinates and rounded to the nearest
+            integer cell for Bresenham tracing. Angles are in radians, and fov is the full
+            opening angle centered on direction.
+
+    Returns:
+        tuple[ndarray, ndarray]:
+            - per_sensor_observation: shape (M, H, W)
+            - combined_observation: shape (H, W)
+              * `combine='union'`: 1 - prod_m(1 - p_m)
+              * `combine='product'`: prod_m p_m across covering sensors only
+    """
+    data = np.asarray(data, dtype=np.float32)
+    data = np.clip(data, 0.0, 1.0)
+    height, width = data.shape
+
+    sensors = _validate_sensors(sensors)
+    num_sensors = len(sensors)
+
+    if num_sensors == 0:
+        return (
+            np.zeros((0, height, width), dtype=np.float32),
+            np.zeros((height, width), dtype=np.float32),
+        )
+
+    data_gpu = cuda.mem_alloc(data.nbytes)
+    cuda.memcpy_htod(data_gpu, data)
+
+    sensors_gpu = cuda.mem_alloc(sensors.nbytes)
+    cuda.memcpy_htod(sensors_gpu, sensors)
+
+    num_cells = height * width
+    results_size = num_sensors * num_cells * np.float32().nbytes
+    results_gpu = cuda.mem_alloc(results_size)
+
+    block = (BLOCK_SIZE, Y_BLOCK_SIZE, 1)
+    grid = (
+        max(1, min(MAX_BLOCKS, int((num_cells + BLOCK_SIZE - 1) / BLOCK_SIZE))),
+        max(
+            1,
+            min(MAX_BLOCKS, int((num_sensors + Y_BLOCK_SIZE - 1) / Y_BLOCK_SIZE)),
+        ),
+    )
+
+    func = mod.get_function("check_sensor_region_visibility")
+    func(
+        data_gpu,
+        np.int32(height),
+        np.int32(width),
+        sensors_gpu,
+        np.int32(num_sensors),
+        results_gpu,
+        block=block,
+        grid=grid,
+    )
+
+    per_sensor_observation = np.zeros((num_sensors * num_cells), dtype=np.float32)
+    cuda.memcpy_dtoh(per_sensor_observation, results_gpu)
+    per_sensor_observation = per_sensor_observation.reshape(
+        (num_sensors, height, width)
+    )
+    per_sensor_observation = np.clip(per_sensor_observation, 0.0, 1.0).astype(
+        np.float32
+    )
+
+    coverage_mask = _sensor_coverage_mask_grid(height, width, sensors)
+    combined_observation = _combine_sensor_observations(
+        per_sensor_observation, coverage_mask, combine
+    )
+
+    return per_sensor_observation, combined_observation
+
+
+def sensor_visibility_from_real_region(
+    data, origin, resolution, sensors, combine="union"
+):
+    """
+    Compute per-sensor clear probabilities over every grid cell using real-valued rays.
+
+    Args:
+        data (ndarray): Occupancy grid of shape (H, W), where each cell stores occupancy
+            probability in [0, 1].
+        origin (tuple[float, float]): World-space origin of grid cell (0, 0).
+        resolution (float): Cell size in world-space units.
+        sensors (array-like): Shape (M, 5) with columns [x, y, range, direction, fov] in
+            world coordinates/units. Angles are in radians, and fov is the full opening
+            angle centered on direction.
+
+    Returns:
+        tuple[ndarray, ndarray]:
+            - per_sensor_observation: shape (M, H, W)
+            - combined_observation: shape (H, W)
+              * `combine='union'`: 1 - prod_m(1 - p_m)
+              * `combine='product'`: prod_m p_m across covering sensors only
+    """
+    data = np.asarray(data, dtype=np.float32)
+    data = np.clip(data, 0.0, 1.0)
+    height, width = data.shape
+
+    sensors = _validate_sensors(sensors)
+    num_sensors = len(sensors)
+
+    if num_sensors == 0:
+        return (
+            np.zeros((0, height, width), dtype=np.float32),
+            np.zeros((height, width), dtype=np.float32),
+        )
+
+    data_gpu = cuda.mem_alloc(data.nbytes)
+    cuda.memcpy_htod(data_gpu, data)
+
+    sensors_gpu = cuda.mem_alloc(sensors.nbytes)
+    cuda.memcpy_htod(sensors_gpu, sensors)
+
+    num_cells = height * width
+    results_size = num_sensors * num_cells * np.float32().nbytes
+    results_gpu = cuda.mem_alloc(results_size)
+
+    block = (BLOCK_SIZE, Y_BLOCK_SIZE, 1)
+    grid = (
+        max(1, min(MAX_BLOCKS, int((num_cells + BLOCK_SIZE - 1) / BLOCK_SIZE))),
+        max(
+            1,
+            min(MAX_BLOCKS, int((num_sensors + Y_BLOCK_SIZE - 1) / Y_BLOCK_SIZE)),
+        ),
+    )
+
+    func = mod.get_function("check_sensor_real_region_visibility")
+    func(
+        data_gpu,
+        np.int32(height),
+        np.int32(width),
+        np.float32(origin[0]),
+        np.float32(origin[1]),
+        np.float32(resolution),
+        sensors_gpu,
+        np.int32(num_sensors),
+        results_gpu,
+        block=block,
+        grid=grid,
+    )
+
+    per_sensor_observation = np.zeros((num_sensors * num_cells), dtype=np.float32)
+    cuda.memcpy_dtoh(per_sensor_observation, results_gpu)
+    per_sensor_observation = per_sensor_observation.reshape(
+        (num_sensors, height, width)
+    )
+    per_sensor_observation = np.clip(per_sensor_observation, 0.0, 1.0).astype(
+        np.float32
+    )
+
+    coverage_mask = _sensor_coverage_mask_real(
+        height, width, origin, resolution, sensors
+    )
+    combined_observation = _combine_sensor_observations(
+        per_sensor_observation, coverage_mask, combine
+    )
+
+    return per_sensor_observation, combined_observation
 
 
 def faux_scan(
