@@ -3,8 +3,8 @@ import pytest
 
 
 @pytest.mark.parametrize("module_name", ["polycheck.poly_warp", "polycheck"])
-def test_destination_cell_blocks_visibility(module_name):
-    """The destination cell occupancy should zero out visibility."""
+def test_destination_cell_is_excluded_from_visibility(module_name):
+    """Endpoint occupancy should not affect visibility."""
     module = pytest.importorskip(module_name)
 
     data = np.zeros((3, 3), dtype=np.float32)
@@ -14,12 +14,12 @@ def test_destination_cell_blocks_visibility(module_name):
     ends = np.array([[2, 1]], dtype=np.int32)
 
     visibility = module.visibility(data, start, ends)
-    assert np.isclose(visibility[1, 2], 0.0, atol=1e-6)
+    assert np.isclose(visibility[1, 2], 1.0, atol=1e-6)
 
 
 @pytest.mark.parametrize("module_name", ["polycheck.poly_warp", "polycheck"])
-def test_destination_cell_counted_once(module_name):
-    """Endpoint occupancy should be applied exactly once."""
+def test_destination_cell_occupancy_ignored_for_fractional_values(module_name):
+    """Endpoint occupancy should be ignored, even for fractional occupancy."""
     module = pytest.importorskip(module_name)
 
     data = np.zeros((3, 3), dtype=np.float32)
@@ -29,4 +29,4 @@ def test_destination_cell_counted_once(module_name):
     ends = np.array([[2, 1]], dtype=np.int32)
 
     visibility = module.visibility(data, start, ends)
-    assert np.isclose(visibility[1, 2], 0.5, atol=1e-6)
+    assert np.isclose(visibility[1, 2], 1.0, atol=1e-6)

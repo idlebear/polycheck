@@ -13,7 +13,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "polycheck"))
 
 
-def test_imports():
+def comparison_imports():
     """Test that both modules can be imported"""
     print("Testing imports...")
 
@@ -56,7 +56,7 @@ def compare_arrays(arr1, arr2, tolerance=1e-5, name="arrays"):
         return True
 
 
-def test_contains(pc, pw):
+def comparison_contains(pc, pw):
     """Test the contains function"""
     print("\nTesting contains function...")
 
@@ -113,7 +113,7 @@ def test_contains(pc, pw):
         return False
 
 
-def test_visibility(pc, pw):
+def comparison_visibility(pc, pw):
     """Test the visibility function"""
     print("\nTesting visibility function...")
 
@@ -138,7 +138,7 @@ def test_visibility(pc, pw):
         return False
 
 
-def test_visibility_from_region(pc, pw):
+def comparison_visibility_from_region(pc, pw):
     """Test the visibility_from_region function"""
     print("\nTesting visibility_from_region function...")
 
@@ -161,7 +161,7 @@ def test_visibility_from_region(pc, pw):
         return False
 
 
-def test_visibility_from_real_region(pc, pw):
+def comparison_visibility_from_real_region(pc, pw):
     """Test the visibility_from_real_region function"""
     print("\nTesting visibility_from_real_region function...")
 
@@ -191,7 +191,7 @@ def test_visibility_from_real_region(pc, pw):
         return False
 
 
-def test_faux_scan(pc, pw):
+def comparison_faux_scan(pc, pw):
     """Test the faux_scan function"""
     print("\nTesting faux_scan function...")
 
@@ -267,20 +267,20 @@ def main():
     print("=" * 60)
 
     # Test imports
-    success, pc, pw = test_imports()
+    success, pc, pw = comparison_imports()
     if not success:
         return 1
 
     # Run functional tests
     tests = [
-        ("contains", lambda: test_contains(pc, pw)),
-        ("visibility", lambda: test_visibility(pc, pw)),
-        ("visibility_from_region", lambda: test_visibility_from_region(pc, pw)),
+        ("contains", lambda: comparison_contains(pc, pw)),
+        ("visibility", lambda: comparison_visibility(pc, pw)),
+        ("visibility_from_region", lambda: comparison_visibility_from_region(pc, pw)),
         (
             "visibility_from_real_region",
-            lambda: test_visibility_from_real_region(pc, pw),
+            lambda: comparison_visibility_from_real_region(pc, pw),
         ),
-        ("faux_scan", lambda: test_faux_scan(pc, pw)),
+        ("faux_scan", lambda: comparison_faux_scan(pc, pw)),
     ]
 
     passed = 0
