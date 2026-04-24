@@ -23,99 +23,135 @@ Functions:
     faux_scan(polygons, origin, angle_start, angle_inc, num_rays, max_range, resolution):
         Performs a faux laser scan from an origin point, simulating rays at specified angles and increments, and checking for intersections with polygons.
 
-    initialize_cuda_context(device_id=0):
-        Creates and activates a new CUDA context on the specified device.
 """
 
+import atexit  # For ensuring context cleanup on exit
+import contextlib  # For context management
 import pycuda.gpuarray as gpuarray
 import pycuda.driver as cuda
-
-import pycuda.autoprimaryctx
 
 # import pycuda.autoinit  # Removed to allow flexible context management
 from pycuda.compiler import SourceModule
 
 import numpy as np
-import atexit  # For ensuring context cleanup on exit
-
-# # --- CUDA Context Management ---
-# _polycheck_module_context = (
-#     None  # Stores the context active during SourceModule compilation
-# )
-# _polycheck_created_this_context = (
-#     False  # True if polycheck created _polycheck_module_context
-# )
+import sys
+import functools
 
 
-# def _establish_module_context():
-#     """
-#     Ensures a CUDA context is available for SourceModule compilation and sets
-#     _polycheck_module_context. Called once when the module is loaded.
-#     Prefers an existing current context. If none, creates one on device 0.
-#     """
-#     global _polycheck_module_context, _polycheck_created_this_context
-#     # This function should only effectively run once at module import.
-#     if _polycheck_module_context is not None:
-#         return
-
-#     # Try to get an already current context
-#     try:
-#         _polycheck_module_context = cuda.Context.get_current()
-#         # If successful, _polycheck_created_this_context remains False,
-#         # as this module did not create this context.
-#     except cuda.LogicError:  # No current context
-#         cuda.init()  # Ensure CUDA driver is initialized
-#         device = cuda.Device(0)  # Default to device 0
-#         _polycheck_module_context = device.make_context()  # Creates and makes current
-#         _polycheck_created_this_context = (
-#             True  # Mark that polycheck created this context
-#         )
+# --- CUDA Context Management ---
+_MODULE_CONTEXT = None  # Stores the context active during SourceModule compilation
+_owns_module_context_ref = False  # True if this module must detach _MODULE_CONTEXT
+_module_context_pushed = (
+    False  # True while this module has _MODULE_CONTEXT on the stack
+)
 
 
-# _establish_module_context()  # Ensure context is ready for SourceModule compilation
+def _establish_module_context():
+    """
+    Ensures a CUDA context is available for SourceModule compilation and sets
+    _MODULE_CONTEXT. Called once when the module is loaded.
+
+    Retains the primary context on the current device, or device 0 if no
+    context is current, and pushes it only long enough to compile the kernels.
+    """
+    global _MODULE_CONTEXT, _owns_module_context_ref, _module_context_pushed
+    # This function should only effectively run once at module import.
+    if _MODULE_CONTEXT is not None:
+        return
+
+    cuda.init()  # Ensure CUDA driver is initialized before querying contexts
+
+    # A current context handle is not retained ownership. Use it only to choose
+    # the device, then retain our own primary-context reference on that device.
+    device = None
+    try:
+        current_context = cuda.Context.get_current()
+        if current_context is not None:
+            device = cuda.Context.get_device()
+    except cuda.LogicError:
+        pass
+
+    if device is None:
+        device = cuda.Device(0)  # Default to device 0
+    try:
+        _MODULE_CONTEXT = device.retain_primary_context()
+        _MODULE_CONTEXT.push()
+        _owns_module_context_ref = True
+    except AttributeError:
+        # Older PyCUDA fallback. make_context() creates and pushes a user context.
+        _MODULE_CONTEXT = device.make_context()
+        _owns_module_context_ref = True
+
+    _module_context_pushed = True
 
 
-# def _cleanup_polycheck_context_atexit():
-#     """
-#     Registered with atexit. Cleans up the CUDA context created by polycheck
-#     at module load time, if one was indeed created by this module because
-#     no other context was active at that time.
-#     """
-#     global _polycheck_module_context, _polycheck_created_this_context
-#     if _polycheck_created_this_context and _polycheck_module_context:
-#         try:
-#             # A CUDA context must be popped from the current thread's context stack
-#             # before it can be detached.
-#             is_current_on_this_thread = False
-#             try:
-#                 if cuda.Context.get_current() == _polycheck_module_context:
-#                     is_current_on_this_thread = True
-#             except cuda.LogicError:  # No context is current on this thread.
-#                 pass
-
-#             if is_current_on_this_thread:
-#                 _polycheck_module_context.pop()
-
-#             _polycheck_module_context.detach()  # Destroy the context
-
-#             _polycheck_module_context = None
-#             _polycheck_created_this_context = False
-#         except cuda.Error:
-#             # Suppress errors during atexit cleanup (e.g., if context was already destroyed)
-#             pass
-#         except Exception:
-#             # Suppress any other unexpected errors during atexit cleanup
-#             pass
+def _pop_module_context_after_compile():
+    """Undo the temporary import-time push performed for kernel compilation."""
+    global _module_context_pushed
+    if _module_context_pushed and _MODULE_CONTEXT is not None:
+        _MODULE_CONTEXT.pop()
+        _module_context_pushed = False
 
 
-# atexit.register(_cleanup_polycheck_context_atexit)
-# # --- End CUDA Context Management ---
+@contextlib.contextmanager
+def _active_cuda_context(context):
+    """Temporarily make a retained MPPI context current on this thread."""
+    context.push()
+    try:
+        yield
+    finally:
+        context.pop()
+
+
+def _with_cuda_context(func):
+    """Decorator to ensure the CUDA context is active during function execution."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        context_pushed = False
+        try:
+            _MODULE_CONTEXT.push()
+            context_pushed = True
+            return func(*args, **kwargs)
+        finally:
+            if context_pushed:
+                _MODULE_CONTEXT.pop()
+
+    return wrapper
+
+
+def _cleanup_context_atexit():
+    """
+    Registered with atexit. Releases the CUDA context reference owned by this
+    module, if this module retained or created one at import time.
+    """
+    global _MODULE_CONTEXT, _owns_module_context_ref, _module_context_pushed
+    if _owns_module_context_ref and _MODULE_CONTEXT is not None:
+        try:
+            if _module_context_pushed:
+                _MODULE_CONTEXT.pop()
+                _module_context_pushed = False
+
+            _MODULE_CONTEXT.detach()  # Release/destroy the retained context
+
+            _MODULE_CONTEXT = None
+            _owns_module_context_ref = False
+        except cuda.Error:
+            # Suppress errors during atexit cleanup (e.g., if context was already destroyed)
+            pass
+        except Exception:
+            # Suppress any other unexpected errors during atexit cleanup
+            pass
+
+
+atexit.register(_cleanup_context_atexit)
+# --- End CUDA Context Management ---
+
 
 BLOCK_SIZE = 32
 Y_BLOCK_SIZE = 32
 MAX_BLOCKS = 32
-mod = SourceModule(
-    """
+_POLYCHECK_SOURCE = """
 
     #include <cmath>
     #include <cfloat>
@@ -230,7 +266,7 @@ mod = SourceModule(
         return winding_number != 0 ? true : false;
     }
 
-    __global__
+    extern "C" __global__
     void check_points(const float *polygon_data, int num_vertices,
                       const float *points_data, int num_points,
                       float *result_data) {
@@ -602,12 +638,13 @@ mod = SourceModule(
     }
 
     __device__ float
-    line_range( const float *polygon_list, const int * polygon_indices, int num_polygons, float sx, float sy, float angle, float max_range, float resolution) {
+    line_range( const float *polygon_list, const int * polygon_indices, int num_polygons, float sx, float sy, float angle, float max_range, float resolution, int *hit_index) {
 
         float ex, ey;
         auto x_inc = cos(angle) * resolution;
         auto y_inc = sin(angle) * resolution;
         auto dist = 0.0;
+        *hit_index = 0x7FFFFFFF;
 
         ex = sx;
         ey = sy;
@@ -618,6 +655,7 @@ mod = SourceModule(
             for( int i = 0; i < num_polygons; i++ ) {
                 if( test_point( &polygon_list[ polygon_indices[i] * 2], size_t(polygon_indices[i+1] - polygon_indices[i]), ex, ey ) ) {
                     // in the polygon -- return the current length
+                    *hit_index = i;
                     return( dist );
                 }
             }
@@ -629,7 +667,7 @@ mod = SourceModule(
         return -1.0;
     }
 
-    __global__ void
+    extern "C" __global__ void
     check_visibility(const float *data, const int height, const int width, const int *start,
                           const int *ends, const int num_ends, const int max_range, float *results ) {
 
@@ -644,7 +682,7 @@ mod = SourceModule(
         }
     }
 
-    __global__ void
+    extern "C" __global__ void
     check_real_visibility(const float *data, const int height, const int width,
                           const float origin_x, const float origin_y, const float resolution,
                           const float *start, const float *ends, const int num_ends, const float max_range, float *results ) {
@@ -661,7 +699,7 @@ mod = SourceModule(
     }
 
 
-    __global__ void
+    extern "C" __global__ void
     check_region_visibility(const float *data, const int height, const int width, const int *starts, const int num_starts,
                           const int *ends, const int num_ends, const int max_range, float *results ) {
 
@@ -683,7 +721,7 @@ mod = SourceModule(
     }
 
 
-    __global__ void
+    extern "C" __global__ void
     check_real_region_visibility(const float *data, const int height, const int width,
                                  const float origin_x, const float origin_y, const float resolution,
                                  const float *starts, const int num_starts, const float *ends,
@@ -708,7 +746,7 @@ mod = SourceModule(
         }
     }
 
-    __global__ void
+    extern "C" __global__ void
     check_sensor_region_visibility(const float *data, const int height, const int width,
                                    const float *sensors, const int num_sensors, float *results) {
 
@@ -749,7 +787,7 @@ mod = SourceModule(
         }
     }
 
-    __global__ void
+    extern "C" __global__ void
     check_sensor_real_region_visibility(const float *data, const int height, const int width,
                                         const float origin_x, const float origin_y, const float resolution,
                                         const float *sensors, const int num_sensors, float *results) {
@@ -794,23 +832,38 @@ mod = SourceModule(
         }
     }
 
-    __global__ void
+    extern "C" __global__ void
     faux_ray(const float *polygon_list, const int* polygon_indices, int num_polygons, float start_x, float start_y,
              const float angle_start, const float angle_increment, const int num_rays, const float max_range, const float resolution,
-             float *results ) {
+             float *results, int *indices ) {
 
         auto start_index = blockIdx.x * blockDim.x + threadIdx.x;
         auto stride = blockDim.x * gridDim.x;
 
         for (auto i = start_index; i < num_rays; i += stride) {
             auto angle = angle_start + i * angle_increment;
-            results[i] = line_range(polygon_list, polygon_indices, num_polygons, start_x, start_y, angle, max_range, resolution );
+            int hit_index;
+            results[i] = line_range(polygon_list, polygon_indices, num_polygons, start_x, start_y, angle, max_range, resolution, &hit_index );
+            indices[i] = hit_index;
         }
     }
 """
-)
+
+try:
+    _establish_module_context()  # Ensure context is ready for SourceModule compilation
+    _COMPILED_MODULE = SourceModule(_POLYCHECK_SOURCE, no_extern_c=True)
+    if _MODULE_CONTEXT is None:
+        raise RuntimeError("Failed to create a CUDA context")
+except cuda.CompileError as e:
+    print("CUDA Compilation Error:", file=sys.stderr)
+    print(e.stderr, file=sys.stderr)
+    raise
+except Exception as e:
+    print(f"Error compiling POLY CUDA module: {e}", file=sys.stderr)
+    raise
 
 
+@_with_cuda_context
 def contains(poly, points):
     num_vertices = len(poly)
     num_points = len(points)
@@ -829,7 +882,7 @@ def contains(poly, points):
     cuda.memcpy_htod(points_gpu, points)
     results_gpu = cuda.mem_alloc(results_size)
 
-    func = mod.get_function("check_points")
+    func = _COMPILED_MODULE.get_function("check_points")
     # block_size = 256
     # num_blocks = max(128, int((num_points + block_size - 1) / block_size))
     block_size = 32
@@ -855,41 +908,7 @@ def contains(poly, points):
     return results
 
 
-def initialize_cuda_context(device_id=0):
-    """
-    Creates and activates a new CUDA context on the specified device.
-
-    This function provides a way for users to explicitly create a new,
-    regular (non-primary) CUDA context. The newly created context will
-    become the current context on this thread. This is useful if the user
-    wants to manage contexts explicitly or ensure operations run on a
-    specific device within a fresh context.
-
-    This method avoids the issues associated with `pycuda.autoinit`'s
-    management of primary contexts, thus being less "disturbing" to
-    an environment where contexts might already be managed.
-
-    Args:
-        device_id (int): The ID of the CUDA device on which to create the context.
-
-    Returns:
-        pycuda.driver.Context: The newly created and activated CUDA context.
-
-    Note:
-        The polycheck module's internal CUDA kernels (compiled into `mod`)
-        are associated with the CUDA context that was active when the
-        `polycheck.polycheck` module was first imported. If this function
-        is called *after* the module has been loaded and it establishes a
-        *different* context, ensure that subsequent calls to polycheck
-        functions are compatible with this context change. PyCUDA operations
-        (memory allocation, kernel launches) occur in the currently active context.
-    """
-    cuda.init()  # Ensure CUDA driver is initialized
-    device = cuda.Device(device_id)
-    context = device.make_context()  # Creates and makes the context current
-    return context
-
-
+@_with_cuda_context
 def visibility(data, start, ends, max_range=None):
     data = data.astype(np.float32)
     height, width = data.shape
@@ -913,7 +932,7 @@ def visibility(data, start, ends, max_range=None):
     results_gpu = cuda.mem_alloc(data.nbytes)
     cuda.memset_d8(results_gpu, 0, data.nbytes)
 
-    func = mod.get_function("check_visibility")
+    func = _COMPILED_MODULE.get_function("check_visibility")
     # block_size = 256
     # num_blocks = max(128, int((num_points + block_size - 1) / block_size))
     block_size = BLOCK_SIZE
@@ -937,6 +956,7 @@ def visibility(data, start, ends, max_range=None):
     return results
 
 
+@_with_cuda_context
 def visibility_from_region(data, starts, ends, max_range=None):
     data = data.astype(np.float32)
     height, width = data.shape
@@ -969,7 +989,7 @@ def visibility_from_region(data, starts, ends, max_range=None):
         max(1, min(MAX_BLOCKS, int((num_starts + Y_BLOCK_SIZE - 1) / Y_BLOCK_SIZE))),
     )
 
-    func = mod.get_function("check_region_visibility")
+    func = _COMPILED_MODULE.get_function("check_region_visibility")
     func(
         data_gpu,
         np.int32(height),
@@ -991,6 +1011,7 @@ def visibility_from_region(data, starts, ends, max_range=None):
     return results
 
 
+@_with_cuda_context
 def visibility_from_real_region(data, origin, resolution, starts, ends, max_range=None):
     data = data.astype(np.float32)
     height, width = data.shape
@@ -1023,7 +1044,7 @@ def visibility_from_real_region(data, origin, resolution, starts, ends, max_rang
         max(1, min(MAX_BLOCKS, int((num_starts + Y_BLOCK_SIZE - 1) / Y_BLOCK_SIZE))),
     )
 
-    func = mod.get_function("check_real_region_visibility")
+    func = _COMPILED_MODULE.get_function("check_real_region_visibility")
     func(
         data_gpu,
         np.int32(height),
@@ -1161,6 +1182,7 @@ def _combine_sensor_observations(per_sensor_observation, coverage_mask, combine)
     return np.clip(combined, 0.0, 1.0).astype(np.float32)
 
 
+@_with_cuda_context
 def sensor_visibility_from_region(data, sensors, combine="union"):
     """
     Compute per-sensor clear probabilities over every grid cell using Bresenham rays.
@@ -1212,7 +1234,7 @@ def sensor_visibility_from_region(data, sensors, combine="union"):
         ),
     )
 
-    func = mod.get_function("check_sensor_region_visibility")
+    func = _COMPILED_MODULE.get_function("check_sensor_region_visibility")
     func(
         data_gpu,
         np.int32(height),
@@ -1241,6 +1263,7 @@ def sensor_visibility_from_region(data, sensors, combine="union"):
     return per_sensor_observation, combined_observation
 
 
+@_with_cuda_context
 def sensor_visibility_from_real_region(
     data, origin, resolution, sensors, combine="union"
 ):
@@ -1295,7 +1318,7 @@ def sensor_visibility_from_real_region(
         ),
     )
 
-    func = mod.get_function("check_sensor_real_region_visibility")
+    func = _COMPILED_MODULE.get_function("check_sensor_real_region_visibility")
     func(
         data_gpu,
         np.int32(height),
@@ -1329,6 +1352,7 @@ def sensor_visibility_from_real_region(
     return per_sensor_observation, combined_observation
 
 
+@_with_cuda_context
 def faux_scan(
     polygons, origin, angle_start, angle_inc, num_rays, max_range, resolution
 ):
@@ -1364,10 +1388,13 @@ def faux_scan(
 
     results_gpu = cuda.mem_alloc(scan_size)
     cuda.memset_d32(results_gpu, 0, num_rays)
+    indices = np.ones((num_rays,), dtype=np.int32) * 0x7FFFFFFF
+    indices_gpu = cuda.mem_alloc(indices.nbytes)
+    cuda.memcpy_htod(indices_gpu, indices)
 
     block = (BLOCK_SIZE, MAX_BLOCKS, 1)
 
-    func = mod.get_function("faux_ray")
+    func = _COMPILED_MODULE.get_function("faux_ray")
     func(
         poly_gpu,
         poly_index_gpu,
@@ -1380,11 +1407,13 @@ def faux_scan(
         np.float32(max_range),
         np.float32(resolution),
         results_gpu,
+        indices_gpu,
         block=block,
     )
 
     # copy the results back
     results = np.zeros(num_rays, dtype=np.float32)
     cuda.memcpy_dtoh(results, results_gpu)
+    cuda.memcpy_dtoh(indices, indices_gpu)
 
-    return results
+    return results, indices
