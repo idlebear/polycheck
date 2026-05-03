@@ -641,16 +641,29 @@ _POLYCHECK_SOURCE = """
     line_range( const float *polygon_list, const int * polygon_indices, int num_polygons, float sx, float sy, float angle, float max_range, float resolution, int *hit_index) {
 
         float ex, ey;
-        auto x_inc = cos(angle) * resolution;
-        auto y_inc = sin(angle) * resolution;
-        auto dist = 0.0;
+        auto x_dir = cosf(angle);
+        auto y_dir = sinf(angle);
+        auto dist = 0.0f;
         *hit_index = 0x7FFFFFFF;
 
         ex = sx;
         ey = sy;
+        for( int i = 0; i < num_polygons; i++ ) {
+            if( test_point( &polygon_list[ polygon_indices[i] * 2], size_t(polygon_indices[i+1] - polygon_indices[i]), sx, sy ) ) {
+                *hit_index = i;
+                return( 0.0f );
+            }
+        }
+
+        if( resolution <= 0.0f || max_range <= 0.0f ) {
+            return -1.0f;
+        }
+
         while( dist < max_range ) {
-            ex += x_inc;
-            ey += y_inc;
+            auto step = fminf(resolution, max_range - dist);
+            ex += x_dir * step;
+            ey += y_dir * step;
+            dist += step;
 
             for( int i = 0; i < num_polygons; i++ ) {
                 if( test_point( &polygon_list[ polygon_indices[i] * 2], size_t(polygon_indices[i+1] - polygon_indices[i]), ex, ey ) ) {
@@ -659,8 +672,6 @@ _POLYCHECK_SOURCE = """
                     return( dist );
                 }
             }
-
-            dist += resolution;
         }
 
         // If we reach this point, the ray contacted nothing in flight
@@ -1392,7 +1403,9 @@ def faux_scan(
     indices_gpu = cuda.mem_alloc(indices.nbytes)
     cuda.memcpy_htod(indices_gpu, indices)
 
-    block = (BLOCK_SIZE, MAX_BLOCKS, 1)
+    block_size = 128
+    block = (block_size, 1, 1)
+    grid = (max(1, int((num_rays + block_size - 1) / block_size)), 1, 1)
 
     func = _COMPILED_MODULE.get_function("faux_ray")
     func(
@@ -1409,6 +1422,7 @@ def faux_scan(
         results_gpu,
         indices_gpu,
         block=block,
+        grid=grid,
     )
 
     # copy the results back
